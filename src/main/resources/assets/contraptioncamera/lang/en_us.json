@@ -1,0 +1,13 @@
+{
+  "contraptioncamera.message.enter": "Contraption Camera — scroll to zoom",
+
+  "key.categories.contraptioncamera": "Contraption Camera",
+  "key.contraptioncamera.freelook": "Freelook (hold)",
+
+  "contraptioncamera.configuration.title": "Contraption Camera Configs",
+  "contraptioncamera.configuration.section.contraptioncamera.client.toml": "Client Settings",
+  "contraptioncamera.configuration.section.contraptioncamera.client.toml.title": "Client Settings",
+  "contraptioncamera.configuration.minZoom": "Minimum Zoom Distance",
+  "contraptioncamera.configuration.maxZoom": "Maximum Zoom Distance",
+  "contraptioncamera.configuration.freelookYawLimit": "Freelook Angle Limit"
+}
