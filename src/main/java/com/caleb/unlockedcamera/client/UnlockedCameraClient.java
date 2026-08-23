@@ -80,8 +80,9 @@ public class UnlockedCameraClient {
     /** Which shoulder the camera favors when zoomed in: +1 or -1. */
     private static int shoulderSide = 1;
     private static float shoulderOffset = 0.0f;
-    /** shoulderOffset after wall clearance, smoothed so passing terrain can't make it snap. */
-    private static float clippedShoulderOffset = 0.0f;
+    /** Wall clearance (magnitude) on the current side: drops instantly, releases smoothly. */
+    private static float shoulderClearance = SHOULDER_OFFSET_AMOUNT;
+    private static float lastClearanceSign = 0.0f;
     private static long lastShoulderNanos = 0L;
 
 
@@ -162,13 +163,23 @@ public class UnlockedCameraClient {
     private static final float PROJECTILE_AIM_RANGE = 64.0f;
 
     /**
+     * Whether the shoulder system is meant to be on right now, based on the
+     * player's chosen zoom — NOT the instantaneous slide position, which passes
+     * through zero mid-swap and would make gates flicker.
+     */
+    private static boolean shoulderEngaged() {
+        return active && ClientConfig.shoulderOffsetEnabled()
+                && ClientConfig.shoulderOffsetMaxZoom() + 1.0f - targetDistance > 0.0f;
+    }
+
+    /**
      * Projectiles fly along the PLAYER's rotation, which the camera-ray pick can't
      * influence. While drawing a bow/crossbow/trident with the shoulder engaged,
      * turn the player toward the camera ray's target so shots land where the
      * center crosshair points.
      */
     private static void turnPlayerWhileAiming(Minecraft mc) {
-        if (Math.abs(clippedShoulderOffset) <= 0.01f || mc.level == null || !mc.player.isUsingItem()) {
+        if (!shoulderEngaged() || mc.level == null || !mc.player.isUsingItem()) {
             return;
         }
         UseAnim anim = mc.player.getUseItem().getUseAnimation();
@@ -276,7 +287,8 @@ public class UnlockedCameraClient {
         collisionCap = 4.0f;
         lastCapNanos = 0L;
         shoulderOffset = 0.0f;
-        clippedShoulderOffset = 0.0f;
+        shoulderClearance = SHOULDER_OFFSET_AMOUNT;
+        lastClearanceSign = 0.0f;
         lastShoulderNanos = 0L;
         if (ClientConfig.showEnterMessage()) {
             mc.player.displayClientMessage(Component.translatable("unlockedcamera.message.enter"), true);
@@ -291,7 +303,7 @@ public class UnlockedCameraClient {
      */
     public static boolean shouldForceCrosshair() {
         return active && (ClientConfig.crosshairAlways()
-                || (ClientConfig.crosshairOnShoulderOffset() && Math.abs(shoulderOffset) > 0.01f));
+                || (ClientConfig.crosshairOnShoulderOffset() && shoulderEngaged()));
     }
 
     /**
@@ -306,7 +318,7 @@ public class UnlockedCameraClient {
      * (mirroring vanilla's filterHitResult) so the server never rejects the action.
      */
     public static HitResult cameraRayPick(Entity entity, double blockInteractionRange, double entityInteractionRange, float partialTick) {
-        if (!active || Math.abs(clippedShoulderOffset) <= 0.01f) {
+        if (!shoulderEngaged()) {
             return null;
         }
         Minecraft mc = Minecraft.getInstance();
@@ -438,7 +450,8 @@ public class UnlockedCameraClient {
         Minecraft mc = Minecraft.getInstance();
         if (!detached || !active || mc.player == null) {
             shoulderOffset = 0.0f;
-            clippedShoulderOffset = 0.0f;
+            shoulderClearance = SHOULDER_OFFSET_AMOUNT;
+            lastClearanceSign = 0.0f;
             lastShoulderNanos = 0L;
             return;
         }
@@ -459,40 +472,47 @@ public class UnlockedCameraClient {
 
         float blend = 1.0f - (float) Math.exp(-deltaSeconds * SHOULDER_SPEED);
         shoulderOffset = Mth.lerp(blend, shoulderOffset, target);
-        if (Math.abs(shoulderOffset) < 0.005f) {
+        // Settle to zero only when disengaging — never mid-swap, where the offset
+        // legitimately passes through zero and zeroing it would hitch the slide.
+        if (target == 0.0f && Math.abs(shoulderOffset) < 0.005f) {
             shoulderOffset = 0.0f;
-            clippedShoulderOffset = 0.0f;
             return;
         }
 
-        float allowed = shoulderOffset;
+        // Wall clearance on the current side, always measured out to the maximum
+        // possible offset so the value is stable while the camera slides. Camera#move's
+        // dx runs along camera-local +X, which is camera-RIGHT (the left vector is
+        // -X), so positive offsets travel opposite to it.
+        float sign = shoulderOffset == 0.0f ? shoulderSide : Math.signum(shoulderOffset);
+        float rawClearance = SHOULDER_OFFSET_AMOUNT;
         if (mc.level != null) {
-            // Clip along the offset direction, keeping a small margin off walls.
-            // Camera#move's dx runs along camera-local +X, which is camera-RIGHT
-            // (the left vector is -X), so positive offsets travel opposite to it.
             Vector3f left = camera.getLeftVector();
             Vec3 from = camera.getPosition();
-            Vec3 direction = new Vec3(-left.x(), -left.y(), -left.z()).scale(Math.signum(shoulderOffset));
-            Vec3 to = from.add(direction.scale(Math.abs(shoulderOffset) + 0.1));
+            Vec3 direction = new Vec3(-left.x(), -left.y(), -left.z()).scale(sign);
+            Vec3 to = from.add(direction.scale(SHOULDER_OFFSET_AMOUNT + 0.1));
             HitResult hit = mc.level.clip(new ClipContext(from, to, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, mc.player));
             if (hit.getType() != HitResult.Type.MISS) {
-                float clearance = (float) Math.max(0.0, hit.getLocation().distanceTo(from) - 0.1);
-                allowed = Math.min(Math.abs(shoulderOffset), clearance) * Math.signum(shoulderOffset);
+                rawClearance = (float) Math.max(0.0, hit.getLocation().distanceTo(from) - 0.1);
             }
         }
 
-        // Blocked: pull in instantly so the camera never sits inside a wall.
-        // Freed: glide back out — otherwise walking past uneven terrain makes the
-        // offset snap in and out every time a block grazes the clearance ray.
-        if (Math.abs(allowed) < Math.abs(clippedShoulderOffset)
-                && Math.signum(allowed) == Math.signum(clippedShoulderOffset)) {
-            clippedShoulderOffset = allowed;
+        // Blocked: cap drops instantly so the camera never sits inside a wall.
+        // Freed: the cap glides back up — otherwise walking past uneven terrain
+        // snaps the offset. On a side switch, adopt the new side's clearance as-is.
+        if (sign != lastClearanceSign) {
+            shoulderClearance = rawClearance;
+            lastClearanceSign = sign;
+        } else if (rawClearance <= shoulderClearance) {
+            shoulderClearance = rawClearance;
         } else {
             float clipBlend = 1.0f - (float) Math.exp(-deltaSeconds * COLLISION_RECOVER_SPEED);
-            clippedShoulderOffset = Mth.lerp(clipBlend, clippedShoulderOffset, allowed);
+            shoulderClearance = Mth.lerp(clipBlend, shoulderClearance, rawClearance);
         }
 
-        ((CameraInvoker) camera).unlockedcamera$move(0.0f, 0.0f, clippedShoulderOffset);
+        float applied = Math.min(Math.abs(shoulderOffset), shoulderClearance) * Math.signum(shoulderOffset);
+        if (applied != 0.0f) {
+            ((CameraInvoker) camera).unlockedcamera$move(0.0f, 0.0f, applied);
+        }
     }
 
     /**
