@@ -22,6 +22,7 @@ import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.api.distmarker.Dist;
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
@@ -68,6 +69,8 @@ public class UnlockedCameraClient {
             "key.categories.unlockedcamera");
 
     private static boolean active = false;
+    /** We were in the unlocked camera when a Sable seat took over; resume on dismount. */
+    private static boolean resumeAfterSeat = false;
     private static float targetDistance = VANILLA_DISTANCE;
     private static float smoothedDistance = VANILLA_DISTANCE;
     private static long lastFrameNanos = 0L;
@@ -92,7 +95,10 @@ public class UnlockedCameraClient {
 
         modEventBus.addListener(UnlockedCameraClient::onRegisterKeyMappings);
         NeoForge.EVENT_BUS.addListener(UnlockedCameraClient::onClientTickPre);
-        NeoForge.EVENT_BUS.addListener(UnlockedCameraClient::onMouseScroll);
+        // LOW priority: mods with scroll interactions (e.g. Create's value boxes and
+        // contraption controls) cancel the scroll event when they handle it, and
+        // they should win over zoom - we only see scrolls nobody else claimed.
+        NeoForge.EVENT_BUS.addListener(EventPriority.LOW, UnlockedCameraClient::onMouseScroll);
         NeoForge.EVENT_BUS.addListener(UnlockedCameraClient::onCameraDistance);
         NeoForge.EVENT_BUS.addListener(UnlockedCameraClient::onComputeCameraAngles);
         NeoForge.EVENT_BUS.addListener(UnlockedCameraClient::onInteractionKeyTriggered);
@@ -155,6 +161,7 @@ public class UnlockedCameraClient {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) {
             active = false;
+            resumeAfterSeat = false;
             return;
         }
 
@@ -174,10 +181,28 @@ public class UnlockedCameraClient {
 
         // Seated in an Aeronautics/Sable contraption: step aside entirely. Don't
         // consume the perspective key (Sable's camera cycle hooks inside vanilla's
-        // key handling, so it must see the clicks) and drop out of our camera.
+        // key handling, so it must see the clicks) and drop out of our camera —
+        // remembering to resume it once the player dismounts.
         if (SableCompat.isRidingSubLevel(mc.player)) {
-            active = false;
+            if (active) {
+                resumeAfterSeat = true;
+                active = false;
+            }
             return;
+        }
+
+        // Dismounted from a Sable seat: Sable restores plain third-person-back,
+        // which would read as vanilla third person. Pick our camera back up with
+        // the zoom the player had before sitting down. If they left the seat's
+        // view cycle in first person, respect that instead.
+        if (resumeAfterSeat) {
+            if (mc.options.getCameraType() == CameraType.THIRD_PERSON_BACK) {
+                resumeAfterSeat = false;
+                active = true;
+            } else if (isVanillaCameraType(mc.options.getCameraType())) {
+                resumeAfterSeat = false;
+            }
+            // Still in a Sable camera type: keep waiting.
         }
 
         // The camera is in a modded camera type we don't know (e.g. Sable's
@@ -243,7 +268,24 @@ public class UnlockedCameraClient {
                 origin, origin.add(direction.scale(range)),
                 ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, mc.player));
 
-        Vec3 aim = hit.getLocation().subtract(eye);
+        Vec3 aimPoint = hit.getLocation();
+        // Sable sublevel hits are in plot-space coordinates with no usable world
+        // direction — but Sable's sublevel-aware HitResult#distanceTo still gives
+        // the TRUE squared world distance from the player. The hit lies on our
+        // camera ray, so solve |origin + t*dir - playerPos|^2 = distSqr for t to
+        // recover the world-space aim point exactly.
+        if (aimPoint.distanceToSqr(origin) > Mth.square(range + 1.0)) {
+            double distSqr = hit.distanceTo(mc.player);
+            Vec3 cameraFromFeet = origin.subtract(mc.player.position());
+            double b = 2.0 * cameraFromFeet.dot(direction);
+            double c = cameraFromFeet.lengthSqr() - distSqr;
+            double discriminant = b * b - 4.0 * c;
+            double t = discriminant >= 0.0 ? (-b + Math.sqrt(discriminant)) / 2.0 : -1.0;
+            // Fall back to a far convergence point if the solve degenerates.
+            aimPoint = origin.add(direction.scale(t > 0.0 ? Math.min(t, range) : range));
+        }
+
+        Vec3 aim = aimPoint.subtract(eye);
         double horizontal = Math.sqrt(aim.x * aim.x + aim.z * aim.z);
         if (aim.length() < 0.5 || horizontal < 1.0E-4) {
             return; // target is basically at the player; keep current rotation
@@ -377,7 +419,6 @@ public class UnlockedCameraClient {
         if (mc.level == null || !camera.isInitialized()) {
             return null;
         }
-
         Vec3 playerEye = entity.getEyePosition(partialTick);
         Vec3 origin = camera.getPosition();
         Vector3f forward = camera.getLookVector();
@@ -389,29 +430,94 @@ public class UnlockedCameraClient {
         Vec3 end = origin.add(direction.scale(maxRange));
         HitResult blockHit = mc.level.clip(new ClipContext(
                 origin, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, entity));
-        double blockDistSqr = blockHit.getType() != HitResult.Type.MISS
+        // Geometric distance along our ray, for the entity sweep. Sable sublevel
+        // hits report plot-space locations thousands of blocks away — treat those
+        // as "full ray" here; reach is validated separately below.
+        double blockGeomSqr = blockHit.getType() != HitResult.Type.MISS
                 ? blockHit.getLocation().distanceToSqr(origin)
                 : Mth.square(maxRange);
-
-        // Entities, like vanilla: search only up to the first block hit.
-        double entitySearch = Math.sqrt(blockDistSqr);
+        double entitySearch = Math.min(Math.sqrt(blockGeomSqr), maxRange);
         Vec3 entityEnd = origin.add(direction.scale(entitySearch));
         AABB searchBox = new AABB(origin, entityEnd).inflate(1.0);
         EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
                 entity, origin, entityEnd, searchBox,
-                target -> !target.isSpectator() && target.isPickable(), blockDistSqr);
+                target -> !target.isSpectator() && target.isPickable(), Mth.square(entitySearch));
 
-        return entityHit != null && entityHit.getLocation().distanceToSqr(origin) < blockDistSqr
-                ? filterToPlayerRange(entityHit, playerEye, entityInteractionRange)
-                : filterToPlayerRange(blockHit, playerEye, blockInteractionRange);
+        return entityHit != null && entityHit.getLocation().distanceToSqr(origin) < blockGeomSqr
+                ? filterToPlayerRange(entityHit, entity, entityInteractionRange)
+                : filterToPlayerRange(blockHit, entity, blockInteractionRange);
     }
 
-    /** Vanilla's filterHitResult, but measured from the PLAYER's eye, not the ray origin. */
-    private static HitResult filterToPlayerRange(HitResult hit, Vec3 playerEye, double range) {
-        Vec3 location = hit.getLocation();
-        if (!location.closerThan(playerEye, range)) {
+    /**
+     * Called from {@link com.caleb.unlockedcamera.mixin.CreateRaycastMixin} in
+     * place of Create's RaycastHelper#getTraceTarget: while the shoulder offset is
+     * engaged, aim Create's UI raycasts from the player's eyes THROUGH the point
+     * the crosshair actually targets (mc.hitResult follows the camera ray here),
+     * so value boxes and contraption controls select what the crosshair shows.
+     * Returns null to use Create's own ray.
+     */
+    public static Vec3 createTraceTarget(net.minecraft.world.entity.player.Player player, double range, Vec3 origin) {
+        Minecraft mc = Minecraft.getInstance();
+        if (!shoulderEngaged() || player != mc.player || mc.hitResult == null) {
+            return null;
+        }
+        Vec3 aim = mc.hitResult.getLocation().subtract(origin);
+        // Degenerate or plot-space (Sable sublevel) locations have no usable
+        // world direction; let Create aim its own ray.
+        if (aim.lengthSqr() < 1.0E-4 || aim.lengthSqr() > Mth.square(256.0f)) {
+            return null;
+        }
+        return origin.add(aim.normalize().scale(range));
+    }
+
+    /**
+     * Called from {@link com.caleb.unlockedcamera.mixin.CreateContraptionRayMixin}:
+     * origin for Create's contraption raycast. The camera position, so the ray IS
+     * the crosshair ray at every depth. Returns null to use Create's own (eye).
+     */
+    public static Vec3 contraptionRayOrigin(net.minecraft.client.player.LocalPlayer player) {
+        Minecraft mc = Minecraft.getInstance();
+        if (!shoulderEngaged() || player != mc.player) {
+            return null;
+        }
+        Camera camera = mc.gameRenderer.getMainCamera();
+        return camera.isInitialized() ? camera.getPosition() : null;
+    }
+
+    /**
+     * Companion to {@link #contraptionRayOrigin}: the ray endpoint, along the
+     * camera direction, extended by the camera's setback behind the player so the
+     * effective reach in front of the player is unchanged.
+     */
+    public static Vec3 contraptionRayTarget(net.minecraft.world.entity.player.Player player, double range, Vec3 origin) {
+        Minecraft mc = Minecraft.getInstance();
+        if (!shoulderEngaged() || player != mc.player) {
+            return null;
+        }
+        Camera camera = mc.gameRenderer.getMainCamera();
+        if (!camera.isInitialized()) {
+            return null;
+        }
+        Vector3f forward = camera.getLookVector();
+        double setback = camera.getPosition().distanceTo(player.getEyePosition());
+        return origin.add(new Vec3(forward.x(), forward.y(), forward.z()).scale(range + setback));
+    }
+
+    /**
+     * Vanilla's filterHitResult, but measured from the PLAYER via
+     * {@code HitResult#distanceTo} (a squared distance) — which Sable overwrites to
+     * be sublevel-aware, so hits on Aeronautics contraptions (whose locations are
+     * in far plot-space coordinates) survive the reach check.
+     */
+    private static HitResult filterToPlayerRange(HitResult hit, Entity player, double range) {
+        if (hit.getType() == HitResult.Type.MISS) {
+            return hit;
+        }
+        if (hit.distanceTo(player) > range * range) {
+            Vec3 location = hit.getLocation();
+            Vec3 eye = player.getEyePosition();
             Direction direction = Direction.getNearest(
-                    location.x - playerEye.x, location.y - playerEye.y, location.z - playerEye.z);
+                    location.x - eye.x, location.y - eye.y, location.z - eye.z);
             return BlockHitResult.miss(location, direction, BlockPos.containing(location));
         }
         return hit;

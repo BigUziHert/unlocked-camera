@@ -3,12 +3,15 @@
   "minVersion": "0.8.5",
   "package": "com.caleb.unlockedcamera.mixin",
   "compatibilityLevel": "JAVA_21",
+  "plugin": "com.caleb.unlockedcamera.mixin.UnlockedCameraMixinPlugin",
   "injectors": {
     "defaultRequire": 1
   },
   "client": [
     "CameraInvoker",
     "CameraMixin",
+    "CreateContraptionRayMixin",
+    "CreateRaycastMixin",
     "GameRendererMixin",
     "GuiMixin",
     "MouseHandlerMixin"
