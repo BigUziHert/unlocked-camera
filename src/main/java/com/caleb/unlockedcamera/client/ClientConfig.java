@@ -9,6 +9,10 @@ public final class ClientConfig {
             .comment("Enable the unlocked camera as a fourth view in the perspective cycle.")
             .define("enableUnlockedCamera", true);
 
+    public static final ModConfigSpec.BooleanValue DISABLE_VANILLA_THIRD_PERSON = BUILDER
+            .comment("Skip vanilla's behind-the-player third person in the perspective cycle, going straight from first person to the unlocked camera.")
+            .define("disableVanillaThirdPerson", false);
+
     public static final ModConfigSpec.BooleanValue ENABLE_FREELOOK = BUILDER
             .comment("Enable freelook (hold the freelook key in first person to look around without turning).")
             .define("enableFreelook", true);
@@ -36,6 +40,10 @@ public final class ClientConfig {
     public static final ModConfigSpec.DoubleValue SHOULDER_OFFSET_MAX_ZOOM = BUILDER
             .comment("Apply the shoulder offset when the camera is at or closer than this distance, in blocks.")
             .defineInRange("shoulderOffsetMaxZoom", 4.0, 1.0, 64.0);
+
+    public static final ModConfigSpec.DoubleValue SHOULDER_OFFSET_AMOUNT = BUILDER
+            .comment("How far the camera slides over the shoulder, in blocks.")
+            .defineInRange("shoulderOffsetAmount", 0.75, 0.5, 1.0);
 
     public static final ModConfigSpec.DoubleValue MIN_ZOOM = BUILDER
             .comment("Closest the unlocked camera can zoom in, in blocks.")
@@ -84,6 +92,14 @@ public final class ClientConfig {
 
     static float shoulderOffsetMaxZoom() {
         return SHOULDER_OFFSET_MAX_ZOOM.get().floatValue();
+    }
+
+    static boolean disableVanillaThirdPerson() {
+        return DISABLE_VANILLA_THIRD_PERSON.get();
+    }
+
+    static float shoulderOffsetAmount() {
+        return SHOULDER_OFFSET_AMOUNT.get().floatValue();
     }
 
     static float minZoom() {

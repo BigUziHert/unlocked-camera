@@ -9,6 +9,7 @@
   "unlockedcamera.configuration.section.unlockedcamera.client.toml": "Client Settings",
   "unlockedcamera.configuration.section.unlockedcamera.client.toml.title": "Client Settings",
   "unlockedcamera.configuration.enableUnlockedCamera": "Enable Unlocked Camera",
+  "unlockedcamera.configuration.disableVanillaThirdPerson": "Disable Vanilla Third Person",
   "unlockedcamera.configuration.enableFreelook": "Enable Freelook",
   "unlockedcamera.configuration.freelookKeepDirection": "Keep Freelook Direction",
   "unlockedcamera.configuration.crosshairAlways": "Permanent Crosshair",
@@ -16,6 +17,7 @@
   "unlockedcamera.configuration.showEnterMessage": "Show Enter Message",
   "unlockedcamera.configuration.enableShoulderOffset": "Shoulder Offset",
   "unlockedcamera.configuration.shoulderOffsetMaxZoom": "Shoulder Offset Max Zoom",
+  "unlockedcamera.configuration.shoulderOffsetAmount": "Shoulder Offset Amount",
   "unlockedcamera.configuration.minZoom": "Minimum Zoom Distance",
   "unlockedcamera.configuration.maxZoom": "Maximum Zoom Distance",
   "unlockedcamera.configuration.freelookYawLimit": "Freelook Angle Limit"

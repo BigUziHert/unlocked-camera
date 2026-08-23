@@ -40,8 +40,8 @@ import org.lwjgl.glfw.GLFW;
 
 @Mod(value = UnlockedCameraMod.MOD_ID, dist = Dist.CLIENT)
 public class UnlockedCameraClient {
-    /** Camera distance when first entering the mode. Vanilla third-person is 4. */
-    private static final float INITIAL_DISTANCE = 8.0f;
+    /** Vanilla fixed third-person camera distance; the unlocked camera enters at it. */
+    private static final float VANILLA_DISTANCE = 4.0f;
     /** Each scroll notch multiplies/divides the distance by this, so zoom feels uniform at any range. */
     private static final float ZOOM_STEP = 1.15f;
     /** Higher = snappier zoom interpolation (per second). */
@@ -50,8 +50,7 @@ public class UnlockedCameraClient {
     private static final float COLLISION_RECOVER_SPEED = 8.0f;
     /** How quickly the view recenters after releasing the freelook key (per second). */
     private static final float FREELOOK_RETURN_SPEED = 12.0f;
-    /** Sideways shoulder offset in blocks, and how fast the camera slides between shoulders (per second). */
-    private static final float SHOULDER_OFFSET_AMOUNT = 0.75f;
+    /** How fast the camera slides between shoulders (per second). */
     private static final float SHOULDER_SPEED = 8.0f;
 
     private static final KeyMapping FREELOOK_KEY = new KeyMapping(
@@ -69,10 +68,10 @@ public class UnlockedCameraClient {
             "key.categories.unlockedcamera");
 
     private static boolean active = false;
-    private static float targetDistance = INITIAL_DISTANCE;
-    private static float smoothedDistance = INITIAL_DISTANCE;
+    private static float targetDistance = VANILLA_DISTANCE;
+    private static float smoothedDistance = VANILLA_DISTANCE;
     private static long lastFrameNanos = 0L;
-    private static float collisionCap = INITIAL_DISTANCE;
+    private static float collisionCap = VANILLA_DISTANCE;
     private static long lastCapNanos = 0L;
     private static float freelookYaw = 0.0f;
     private static float freelookPitch = 0.0f;
@@ -81,7 +80,7 @@ public class UnlockedCameraClient {
     private static int shoulderSide = 1;
     private static float shoulderOffset = 0.0f;
     /** Wall clearance (magnitude) on the current side: drops instantly, releases smoothly. */
-    private static float shoulderClearance = SHOULDER_OFFSET_AMOUNT;
+    private static float shoulderClearance = 0.75f;
     private static float lastClearanceSign = 0.0f;
     private static long lastShoulderNanos = 0L;
 
@@ -271,7 +270,15 @@ public class UnlockedCameraClient {
         }
 
         switch (mc.options.getCameraType()) {
-            case FIRST_PERSON -> setCameraType(mc, CameraType.THIRD_PERSON_BACK);
+            case FIRST_PERSON -> {
+                // With the unlocked camera entering at vanilla distance, the two
+                // behind views read as duplicates; optionally skip the vanilla one.
+                if (ClientConfig.disableVanillaThirdPerson()) {
+                    enterCamera(mc);
+                } else {
+                    setCameraType(mc, CameraType.THIRD_PERSON_BACK);
+                }
+            }
             case THIRD_PERSON_BACK -> enterCamera(mc);
             case THIRD_PERSON_FRONT -> setCameraType(mc, CameraType.FIRST_PERSON);
         }
@@ -324,14 +331,14 @@ public class UnlockedCameraClient {
     private static void enterCamera(Minecraft mc) {
         active = true;
         setCameraType(mc, CameraType.THIRD_PERSON_BACK);
-        targetDistance = Mth.clamp(INITIAL_DISTANCE, ClientConfig.minZoom(), ClientConfig.maxZoom());
-        // Start from vanilla's distance so entering plays a short zoom-out.
-        smoothedDistance = 4.0f;
+        targetDistance = Mth.clamp(VANILLA_DISTANCE, ClientConfig.minZoom(), ClientConfig.maxZoom());
+        // Enter exactly where vanilla third person sits - no zoom animation.
+        smoothedDistance = VANILLA_DISTANCE;
         lastFrameNanos = 0L;
-        collisionCap = 4.0f;
+        collisionCap = VANILLA_DISTANCE;
         lastCapNanos = 0L;
         shoulderOffset = 0.0f;
-        shoulderClearance = SHOULDER_OFFSET_AMOUNT;
+        shoulderClearance = ClientConfig.shoulderOffsetAmount();
         lastClearanceSign = 0.0f;
         lastShoulderNanos = 0L;
         if (ClientConfig.showEnterMessage()) {
@@ -506,7 +513,7 @@ public class UnlockedCameraClient {
         Minecraft mc = Minecraft.getInstance();
         if (!detached || !active || mc.player == null) {
             shoulderOffset = 0.0f;
-            shoulderClearance = SHOULDER_OFFSET_AMOUNT;
+            shoulderClearance = ClientConfig.shoulderOffsetAmount();
             lastClearanceSign = 0.0f;
             lastShoulderNanos = 0L;
             return;
@@ -523,7 +530,7 @@ public class UnlockedCameraClient {
             // through close distances and walls push the camera in, and neither
             // should flash the offset on.
             float fade = Mth.clamp(ClientConfig.shoulderOffsetMaxZoom() + 1.0f - targetDistance, 0.0f, 1.0f);
-            target = shoulderSide * SHOULDER_OFFSET_AMOUNT * fade;
+            target = shoulderSide * ClientConfig.shoulderOffsetAmount() * fade;
         }
 
         float blend = 1.0f - (float) Math.exp(-deltaSeconds * SHOULDER_SPEED);
@@ -540,12 +547,12 @@ public class UnlockedCameraClient {
         // dx runs along camera-local +X, which is camera-RIGHT (the left vector is
         // -X), so positive offsets travel opposite to it.
         float sign = shoulderOffset == 0.0f ? shoulderSide : Math.signum(shoulderOffset);
-        float rawClearance = SHOULDER_OFFSET_AMOUNT;
+        float rawClearance = ClientConfig.shoulderOffsetAmount();
         if (mc.level != null) {
             Vector3f left = camera.getLeftVector();
             Vec3 from = camera.getPosition();
             Vec3 direction = new Vec3(-left.x(), -left.y(), -left.z()).scale(sign);
-            Vec3 to = from.add(direction.scale(SHOULDER_OFFSET_AMOUNT + 0.1));
+            Vec3 to = from.add(direction.scale(rawClearance + 0.1));
             HitResult hit = mc.level.clip(new ClipContext(from, to, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, mc.player));
             if (hit.getType() != HitResult.Type.MISS) {
                 rawClearance = (float) Math.max(0.0, hit.getLocation().distanceTo(from) - 0.1);
