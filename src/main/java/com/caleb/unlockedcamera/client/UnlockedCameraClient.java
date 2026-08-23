@@ -96,6 +96,50 @@ public class UnlockedCameraClient {
         NeoForge.EVENT_BUS.addListener(UnlockedCameraClient::onMouseScroll);
         NeoForge.EVENT_BUS.addListener(UnlockedCameraClient::onCameraDistance);
         NeoForge.EVENT_BUS.addListener(UnlockedCameraClient::onComputeCameraAngles);
+        NeoForge.EVENT_BUS.addListener(UnlockedCameraClient::onInteractionKeyTriggered);
+    }
+
+    /**
+     * Clicking during freelook: snap the player's body to where the freelook
+     * camera points (the view itself doesn't move — the offset collapses into the
+     * real rotation), then refresh targeting so this very click lands on the
+     * crosshair. Mirrors the camera-direction snap the shoulder camera gets in
+     * third person.
+     */
+    static void onInteractionKeyTriggered(InputEvent.InteractionKeyMappingTriggered event) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) {
+            return;
+        }
+        if (Math.abs(freelookYaw) < 0.5f && Math.abs(freelookPitch) < 0.5f) {
+            return;
+        }
+
+        snapPlayerToFreelook(mc);
+
+        // hitResult was computed from the old rotation at the start of the tick;
+        // recompute so the pending interaction uses the snapped aim.
+        mc.gameRenderer.pick(1.0f);
+    }
+
+    /** Collapse the freelook offset into the player's real rotation; the view doesn't move. */
+    private static void snapPlayerToFreelook(Minecraft mc) {
+        float newYaw = mc.player.getYRot() + freelookYaw;
+        float newPitch = Mth.clamp(mc.player.getXRot() + freelookPitch, -90.0f, 90.0f);
+        mc.player.setYRot(newYaw);
+        mc.player.setXRot(newPitch);
+        // Also set the previous-tick rotations so the frame doesn't interpolate
+        // through the swing while the freelook offset simultaneously collapses.
+        mc.player.yRotO = newYaw;
+        mc.player.xRotO = newPitch;
+        // The first-person hand sways by the gap between the rotation and these
+        // eased "bob" angles; sync them so the hand doesn't lurch after a snap.
+        mc.player.yBob = newYaw;
+        mc.player.yBobO = newYaw;
+        mc.player.xBob = newPitch;
+        mc.player.xBobO = newPitch;
+        freelookYaw = 0.0f;
+        freelookPitch = 0.0f;
     }
 
     static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
@@ -419,6 +463,18 @@ public class UnlockedCameraClient {
 
         if (!isFreelookHeld(mc)) {
             if (freelookYaw == 0.0f && freelookPitch == 0.0f) {
+                return;
+            }
+            if (ClientConfig.freelookKeepDirection()) {
+                // Key released: keep facing where we looked. Collapse the offset
+                // into the player's rotation on the very first frame after
+                // release, before any ease-back can move the view — the screen
+                // doesn't shift at all, the body just pivots under it. The event's
+                // default angles were captured BEFORE the snap, so they must be
+                // overridden or this frame flashes the old rotation.
+                snapPlayerToFreelook(mc);
+                event.setYaw(mc.player.getYRot());
+                event.setPitch(mc.player.getXRot());
                 return;
             }
             // Key released: ease the view back to where the player actually looks.

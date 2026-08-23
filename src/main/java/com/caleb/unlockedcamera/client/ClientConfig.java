@@ -13,6 +13,10 @@ public final class ClientConfig {
             .comment("Enable freelook (hold the freelook key in first person to look around without turning).")
             .define("enableFreelook", true);
 
+    public static final ModConfigSpec.BooleanValue FREELOOK_KEEP_DIRECTION = BUILDER
+            .comment("When releasing the freelook key, turn the player to face where you were looking instead of easing the view back to where it was.")
+            .define("freelookKeepDirection", false);
+
     public static final ModConfigSpec.BooleanValue CROSSHAIR_ALWAYS = BUILDER
             .comment("Always show the aim-corrected crosshair while the unlocked camera is active.")
             .define("crosshairAlways", false);
@@ -56,6 +60,10 @@ public final class ClientConfig {
 
     static boolean freelookEnabled() {
         return ENABLE_FREELOOK.get();
+    }
+
+    static boolean freelookKeepDirection() {
+        return FREELOOK_KEEP_DIRECTION.get();
     }
 
     static boolean crosshairAlways() {

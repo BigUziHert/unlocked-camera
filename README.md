@@ -29,8 +29,10 @@ slides over the shoulder; press `X` (rebindable) to swap sides. The offset clips
 against walls so it never pokes through blocks.
 
 **Freelook:** in first person, hold `Left Alt` (rebindable) and move the mouse to
-look around without turning your body — movement direction and aim stay put. On
-release the view eases back to center.
+look around without turning your body — movement direction and aim stay put.
+Clicking mid-freelook snaps your body to where you're looking, so the interaction
+lands on the crosshair. On release the view eases back to your original facing;
+enable `freelookKeepDirection` to keep facing where you were looking instead.
 
 **Better Third Person compatibility:** the mod never touches camera rotation, so
 BTP's free orbit is untouched; targeting through the center crosshair works the
@@ -49,6 +51,8 @@ Mods > Unlocked Camera > Config; changes apply live):
 
 - `enableUnlockedCamera` — toggle the fourth perspective on/off, default on
 - `enableFreelook` — toggle freelook on/off, default on
+- `freelookKeepDirection` — on release, face where you were looking instead of
+  easing back, default off
 - `crosshairAlways` — always draw the aim-corrected crosshair in the unlocked
   camera, default off
 - `crosshairOnShoulderOffset` — draw it while the shoulder offset is engaged,

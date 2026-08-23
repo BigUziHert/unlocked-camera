@@ -10,6 +10,7 @@
   "unlockedcamera.configuration.section.unlockedcamera.client.toml.title": "Client Settings",
   "unlockedcamera.configuration.enableUnlockedCamera": "Enable Unlocked Camera",
   "unlockedcamera.configuration.enableFreelook": "Enable Freelook",
+  "unlockedcamera.configuration.freelookKeepDirection": "Keep Freelook Direction",
   "unlockedcamera.configuration.crosshairAlways": "Permanent Crosshair",
   "unlockedcamera.configuration.crosshairOnShoulderOffset": "Crosshair During Shoulder Offset",
   "unlockedcamera.configuration.showEnterMessage": "Show Enter Message",
