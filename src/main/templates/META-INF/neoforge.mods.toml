@@ -46,10 +46,10 @@ authors="Caleb"
 
 # The description text for the mod (multi line!) (#mandatory)
 description='''
-A standalone "contraption camera": adds a fourth perspective to the vanilla
-view cycle (F5). Between third person and front-facing third person comes a
-detached orbit camera you can zoom in and out with the scroll wheel, like the
-contraption camera in Create Aeronautics.
+An unlocked camera: adds a fourth perspective to the vanilla view cycle (F5).
+Between third person and front-facing third person comes a detached orbit
+camera with scroll-wheel zoom, an over-the-shoulder offset when zoomed in,
+and hold-to-freelook in first person.
 '''
 
 # The [[mixins]] block allows you to declare your mixin config to FML so that it gets loaded.

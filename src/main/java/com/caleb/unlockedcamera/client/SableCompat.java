@@ -1,4 +1,4 @@
-package com.caleb.contraptioncamera.client;
+package com.caleb.unlockedcamera.client;
 
 import net.minecraft.world.entity.Entity;
 

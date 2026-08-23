@@ -1,0 +1,21 @@
+{
+  "unlockedcamera.message.enter": "Unlocked Camera — scroll to zoom",
+
+  "key.categories.unlockedcamera": "Unlocked Camera",
+  "key.unlockedcamera.freelook": "Freelook (hold)",
+  "key.unlockedcamera.swapShoulder": "Swap Shoulder",
+
+  "unlockedcamera.configuration.title": "Unlocked Camera Configs",
+  "unlockedcamera.configuration.section.unlockedcamera.client.toml": "Client Settings",
+  "unlockedcamera.configuration.section.unlockedcamera.client.toml.title": "Client Settings",
+  "unlockedcamera.configuration.enableUnlockedCamera": "Enable Unlocked Camera",
+  "unlockedcamera.configuration.enableFreelook": "Enable Freelook",
+  "unlockedcamera.configuration.crosshairAlways": "Permanent Crosshair",
+  "unlockedcamera.configuration.crosshairOnShoulderOffset": "Crosshair During Shoulder Offset",
+  "unlockedcamera.configuration.showEnterMessage": "Show Enter Message",
+  "unlockedcamera.configuration.enableShoulderOffset": "Shoulder Offset",
+  "unlockedcamera.configuration.shoulderOffsetMaxZoom": "Shoulder Offset Max Zoom",
+  "unlockedcamera.configuration.minZoom": "Minimum Zoom Distance",
+  "unlockedcamera.configuration.maxZoom": "Maximum Zoom Distance",
+  "unlockedcamera.configuration.freelookYawLimit": "Freelook Angle Limit"
+}

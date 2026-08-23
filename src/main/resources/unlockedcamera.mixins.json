@@ -1,13 +1,16 @@
 {
   "required": true,
   "minVersion": "0.8.5",
-  "package": "com.caleb.contraptioncamera.mixin",
+  "package": "com.caleb.unlockedcamera.mixin",
   "compatibilityLevel": "JAVA_21",
   "injectors": {
     "defaultRequire": 1
   },
   "client": [
+    "CameraInvoker",
     "CameraMixin",
+    "GameRendererMixin",
+    "GuiMixin",
     "MouseHandlerMixin"
   ]
 }

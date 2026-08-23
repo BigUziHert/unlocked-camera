@@ -1,9 +1,9 @@
-# Contraption Camera
+# Unlocked Camera
 
-A standalone "contraption camera" for **NeoForge 1.21.1**, inspired by the camera in
+An unlocked camera for **NeoForge 1.21.1**, inspired by the contraption camera in
 Create Aeronautics: a fourth perspective in the vanilla view cycle that detaches into
-an orbit camera you can zoom with the scroll wheel — far beyond vanilla's fixed
-4-block distance.
+an orbit camera with scroll-wheel zoom, an over-the-shoulder offset up close, and
+hold-to-freelook in first person.
 
 ## Controls
 
@@ -11,15 +11,30 @@ an orbit camera you can zoom with the scroll wheel — far beyond vanilla's fixe
 
 1. First person
 2. Third person (behind)
-3. **Contraption camera** — scroll wheel zooms in / out (smoothed)
+3. **Unlocked camera** — scroll wheel zooms in / out (smoothed)
 4. Third person (front-facing)
 
-While the contraption camera is active, scrolling zooms instead of switching hotbar
+While the unlocked camera is active, scrolling zooms instead of switching hotbar
 slots. When terrain pulls the camera in, it glides back out smoothly once clear.
+
+**Centered, truthful crosshair:** the crosshair stays fixed at screen center.
+While the shoulder offset is engaged, targeting raycasts from the camera through
+that center crosshair (validated against your real reach), so whatever sits under
+the crosshair is what you mine, hit, or interact with — like an over-the-shoulder
+shooter. By default the crosshair appears while the offset is engaged; a config
+option makes it permanent.
+
+**Shoulder offset:** zoomed in to 4 blocks or closer (configurable), the camera
+slides over the shoulder; press `X` (rebindable) to swap sides. The offset clips
+against walls so it never pokes through blocks.
 
 **Freelook:** in first person, hold `Left Alt` (rebindable) and move the mouse to
 look around without turning your body — movement direction and aim stay put. On
 release the view eases back to center.
+
+**Better Third Person compatibility:** the mod never touches camera rotation, so
+BTP's free orbit is untouched; targeting through the center crosshair works the
+same with or without BTP.
 
 **Create Aeronautics compatibility:** while seated in an Aeronautics contraption
 (a Sable "sublevel"), this mod steps aside completely — the perspective key behaves
@@ -29,9 +44,20 @@ dependency on it.
 
 ## Config
 
-Zoom limits live in `config/contraptioncamera-client.toml` (also editable in-game via
-Mods > Contraption Camera > Config):
+Settings live in `config/unlockedcamera-client.toml` (also editable in-game via
+Mods > Unlocked Camera > Config; changes apply live):
 
+- `enableUnlockedCamera` — toggle the fourth perspective on/off, default on
+- `enableFreelook` — toggle freelook on/off, default on
+- `crosshairAlways` — always draw the aim-corrected crosshair in the unlocked
+  camera, default off
+- `crosshairOnShoulderOffset` — draw it while the shoulder offset is engaged,
+  default on
+- `showEnterMessage` — show the action-bar text when entering the unlocked
+  camera, default on
+- `enableShoulderOffset` — toggle the over-the-shoulder offset, default on
+- `shoulderOffsetMaxZoom` — apply the shoulder offset at or closer than this
+  distance in blocks, default 4
 - `minZoom` — closest zoom, default 1 block
 - `maxZoom` — farthest zoom, default 12 blocks
 - `freelookYawLimit` — how far left/right freelook can swing in degrees, default 90
@@ -48,5 +74,6 @@ Requires JDK 21 (`gradle.properties` points Gradle at `C:/Program Files/Java/jdk
 
 Key source files:
 
-- `src/main/java/com/caleb/contraptioncamera/ContraptionCameraMod.java` — mod entry point
-- `src/main/java/com/caleb/contraptioncamera/client/ContraptionCameraClient.java` — all camera logic (client only)
+- `src/main/java/com/caleb/unlockedcamera/UnlockedCameraMod.java` — mod entry point
+- `src/main/java/com/caleb/unlockedcamera/client/UnlockedCameraClient.java` — all camera logic (client only)
+- `src/main/java/com/caleb/unlockedcamera/mixin/` — Camera, Gui, and MouseHandler hooks

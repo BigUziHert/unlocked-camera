@@ -1,6 +1,6 @@
-package com.caleb.contraptioncamera.mixin;
+package com.caleb.unlockedcamera.mixin;
 
-import com.caleb.contraptioncamera.client.ContraptionCameraClient;
+import com.caleb.unlockedcamera.client.UnlockedCameraClient;
 import net.minecraft.client.MouseHandler;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -21,8 +21,8 @@ public abstract class MouseHandlerMixin {
      * accumulated deltas right after, so cancelling here is safe.
      */
     @Inject(method = "turnPlayer", at = @At("HEAD"), cancellable = true)
-    private void contraptioncamera$freelook(double movementTime, CallbackInfo ci) {
-        if (ContraptionCameraClient.freelookMouseTurn(this.accumulatedDX, this.accumulatedDY)) {
+    private void unlockedcamera$freelook(double movementTime, CallbackInfo ci) {
+        if (UnlockedCameraClient.freelookMouseTurn(this.accumulatedDX, this.accumulatedDY)) {
             ci.cancel();
         }
     }
