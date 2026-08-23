@@ -13,6 +13,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
+import net.minecraft.world.item.UseAnim;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.AABB;
@@ -151,6 +152,52 @@ public class UnlockedCameraClient {
         if (active && mc.options.getCameraType() != CameraType.THIRD_PERSON_BACK) {
             active = false;
         }
+
+        if (active) {
+            turnPlayerWhileAiming(mc);
+        }
+    }
+
+    /** How far out the camera ray converges projectile aim, in blocks. */
+    private static final float PROJECTILE_AIM_RANGE = 64.0f;
+
+    /**
+     * Projectiles fly along the PLAYER's rotation, which the camera-ray pick can't
+     * influence. While drawing a bow/crossbow/trident with the shoulder engaged,
+     * turn the player toward the camera ray's target so shots land where the
+     * center crosshair points.
+     */
+    private static void turnPlayerWhileAiming(Minecraft mc) {
+        if (Math.abs(clippedShoulderOffset) <= 0.01f || mc.level == null || !mc.player.isUsingItem()) {
+            return;
+        }
+        UseAnim anim = mc.player.getUseItem().getUseAnimation();
+        if (anim != UseAnim.BOW && anim != UseAnim.CROSSBOW && anim != UseAnim.SPEAR) {
+            return;
+        }
+        Camera camera = mc.gameRenderer.getMainCamera();
+        if (!camera.isInitialized()) {
+            return;
+        }
+
+        Vector3f forward = camera.getLookVector();
+        Vec3 direction = new Vec3(forward.x(), forward.y(), forward.z());
+        Vec3 origin = camera.getPosition();
+        Vec3 eye = mc.player.getEyePosition();
+        double range = PROJECTILE_AIM_RANGE + origin.distanceTo(eye);
+        HitResult hit = mc.level.clip(new ClipContext(
+                origin, origin.add(direction.scale(range)),
+                ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, mc.player));
+
+        Vec3 aim = hit.getLocation().subtract(eye);
+        double horizontal = Math.sqrt(aim.x * aim.x + aim.z * aim.z);
+        if (aim.length() < 0.5 || horizontal < 1.0E-4) {
+            return; // target is basically at the player; keep current rotation
+        }
+        float yaw = (float) Math.toDegrees(Mth.atan2(aim.z, aim.x)) - 90.0f;
+        float pitch = (float) -Math.toDegrees(Mth.atan2(aim.y, horizontal));
+        mc.player.setYRot(yaw);
+        mc.player.setXRot(Mth.clamp(pitch, -90.0f, 90.0f));
     }
 
     /** Mods like Sable extend the CameraType enum; only handle the vanilla three. */
