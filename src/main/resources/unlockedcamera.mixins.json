@@ -10,10 +10,16 @@
   "client": [
     "CameraInvoker",
     "CameraMixin",
+    "ClientPacketListenerMixin",
+    "CreateBigOutlinesMixin",
     "CreateContraptionRayMixin",
     "CreateRaycastMixin",
     "GameRendererMixin",
     "GuiMixin",
-    "MouseHandlerMixin"
+    "MouseHandlerMixin",
+    "SimulatedHoneyGlueMixin",
+    "SimulatedPhysicsStaffMixin",
+    "SimulatedPhysicsStaffRenderMixin",
+    "SimulatedSteeringWheelMixin"
   ]
 }

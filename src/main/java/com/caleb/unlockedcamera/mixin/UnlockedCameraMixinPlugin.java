@@ -12,6 +12,9 @@ import java.util.Set;
 public class UnlockedCameraMixinPlugin implements IMixinConfigPlugin {
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        if (mixinClassName.contains(".Simulated")) {
+            return LoadingModList.get().getModFileById("simulated") != null;
+        }
         if (mixinClassName.contains(".Create")) {
             return LoadingModList.get().getModFileById("create") != null;
         }

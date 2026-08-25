@@ -12,8 +12,14 @@ import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.CrossbowItem;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.UseAnim;
+import net.minecraft.world.item.component.ChargedProjectiles;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.AABB;
@@ -126,6 +132,7 @@ public class UnlockedCameraClient {
         // recompute so the pending interaction uses the snapped aim.
         mc.gameRenderer.pick(1.0f);
     }
+
 
     /** Collapse the freelook offset into the player's real rotation; the view doesn't move. */
     private static void snapPlayerToFreelook(Minecraft mc) {
@@ -247,16 +254,64 @@ public class UnlockedCameraClient {
      * center crosshair points.
      */
     private static void turnPlayerWhileAiming(Minecraft mc) {
-        if (!shoulderEngaged() || mc.level == null || !mc.player.isUsingItem()) {
+        if (!shoulderEngaged() || mc.level == null) {
             return;
         }
-        UseAnim anim = mc.player.getUseItem().getUseAnimation();
-        if (anim != UseAnim.BOW && anim != UseAnim.CROSSBOW && anim != UseAnim.SPEAR) {
+        if (mc.player.isUsingItem()) {
+            UseAnim anim = mc.player.getUseItem().getUseAnimation();
+            if (anim == UseAnim.BOW || anim == UseAnim.CROSSBOW || anim == UseAnim.SPEAR) {
+                aimPlayerAlongCrosshair(mc.player);
+            }
             return;
+        }
+        // A loaded crossbow fires from a resting state, so the draw-time aiming
+        // above never covers the shot. Keep aiming while one is held: the bow only
+        // lands true because the rotation stays synced to the server throughout
+        // the draw, and this gives the crossbow the same footing.
+        if (isHoldingLoadedCrossbow(mc.player)) {
+            aimPlayerAlongCrosshair(mc.player);
+        }
+    }
+
+    private static boolean isHoldingLoadedCrossbow(Player player) {
+        for (InteractionHand hand : InteractionHand.values()) {
+            ItemStack stack = player.getItemInHand(hand);
+            if (stack.getItem() instanceof CrossbowItem) {
+                ChargedProjectiles charged = stack.get(DataComponents.CHARGED_PROJECTILES);
+                if (charged != null && !charged.isEmpty()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Points the player's body down the crosshair ray, so projectiles — which fly
+     * along the body's rotation — land where the crosshair points.
+     */
+    public static void aimPlayerAlongCrosshair(Player player) {
+        float[] angles = crosshairAimAngles();
+        if (angles != null && player == Minecraft.getInstance().player) {
+            player.setYRot(angles[0]);
+            player.setXRot(angles[1]);
+        }
+    }
+
+
+    /**
+     * The yaw/pitch the player must face for a projectile fired from their eyes to
+     * land where the crosshair points, or null while the shoulder offset is
+     * disengaged. Returns {yaw, pitch}.
+     */
+    public static float[] crosshairAimAngles() {
+        Minecraft mc = Minecraft.getInstance();
+        if (!shoulderEngaged() || mc.level == null || mc.player == null) {
+            return null;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
         if (!camera.isInitialized()) {
-            return;
+            return null;
         }
 
         Vector3f forward = camera.getLookVector();
@@ -288,12 +343,11 @@ public class UnlockedCameraClient {
         Vec3 aim = aimPoint.subtract(eye);
         double horizontal = Math.sqrt(aim.x * aim.x + aim.z * aim.z);
         if (aim.length() < 0.5 || horizontal < 1.0E-4) {
-            return; // target is basically at the player; keep current rotation
+            return null; // target is basically at the player; keep current rotation
         }
         float yaw = (float) Math.toDegrees(Mth.atan2(aim.z, aim.x)) - 90.0f;
         float pitch = (float) -Math.toDegrees(Mth.atan2(aim.y, horizontal));
-        mc.player.setYRot(yaw);
-        mc.player.setXRot(Mth.clamp(pitch, -90.0f, 90.0f));
+        return new float[] {yaw, Mth.clamp(pitch, -90.0f, 90.0f)};
     }
 
     /** Mods like Sable extend the CameraType enum; only handle the vanilla three. */
@@ -501,6 +555,110 @@ public class UnlockedCameraClient {
         Vector3f forward = camera.getLookVector();
         double setback = camera.getPosition().distanceTo(player.getEyePosition());
         return origin.add(new Vec3(forward.x(), forward.y(), forward.z()).scale(range + setback));
+    }
+
+
+    /**
+     * Origin of the crosshair ray (the camera position) while the shoulder offset
+     * is engaged, else null. Used to redirect other mods' own eye-and-look
+     * raycasts onto the crosshair — without it they target whatever the player's
+     * body faces, which the sideways offset decouples from what you see.
+     */
+    public static Vec3 crosshairRayOrigin() {
+        Minecraft mc = Minecraft.getInstance();
+        if (!shoulderEngaged() || mc.player == null) {
+            return null;
+        }
+        Camera camera = mc.gameRenderer.getMainCamera();
+        return camera.isInitialized() ? camera.getPosition() : null;
+    }
+
+
+    /**
+     * Offset from the player's eye to the point on the crosshair ray that sits
+     * exactly {@code distance} away from the eye. Lets other mods' "eye + look *
+     * distance" targeting follow the crosshair while keeping the distance they
+     * chose — solving |origin + t*dir - eye| = distance for t.
+     *
+     * <p>Returns null while the shoulder offset is disengaged, or when the
+     * crosshair ray never reaches that distance from the eye.
+     */
+    public static Vec3 crosshairOffsetFromEye(double distance) {
+        Minecraft mc = Minecraft.getInstance();
+        if (!shoulderEngaged() || mc.player == null) {
+            return null;
+        }
+        Camera camera = mc.gameRenderer.getMainCamera();
+        if (!camera.isInitialized()) {
+            return null;
+        }
+        Vector3f forward = camera.getLookVector();
+        Vec3 direction = new Vec3(forward.x(), forward.y(), forward.z());
+        Vec3 origin = camera.getPosition();
+        Vec3 eye = mc.player.getEyePosition();
+
+        Vec3 originFromEye = origin.subtract(eye);
+        double b = 2.0 * originFromEye.dot(direction);
+        double c = originFromEye.lengthSqr() - distance * distance;
+        double discriminant = b * b - 4.0 * c;
+        if (discriminant < 0.0) {
+            return null;
+        }
+        double t = (-b + Math.sqrt(discriminant)) / 2.0;
+        if (t <= 0.0) {
+            return null;
+        }
+        return origin.add(direction.scale(t)).subtract(eye);
+    }
+
+    /**
+     * Crosshair-aligned replacement for {@code Entity#pick}, which raycasts from
+     * the entity's eye along its body look. Returns null while the shoulder offset
+     * is disengaged so the caller keeps vanilla behaviour.
+     */
+    public static HitResult crosshairPick(Entity entity, double hitDistance, float partialTick, boolean hitFluids) {
+        Minecraft mc = Minecraft.getInstance();
+        if (!shoulderEngaged() || mc.level == null) {
+            return null;
+        }
+        Camera camera = mc.gameRenderer.getMainCamera();
+        if (!camera.isInitialized()) {
+            return null;
+        }
+        Vector3f forward = camera.getLookVector();
+        Vec3 origin = camera.getPosition();
+        Vec3 end = origin.add(new Vec3(forward.x(), forward.y(), forward.z())
+                .scale(hitDistance + crosshairRaySetback()));
+        return mc.level.clip(new ClipContext(origin, end, ClipContext.Block.OUTLINE,
+                hitFluids ? ClipContext.Fluid.ANY : ClipContext.Fluid.NONE, entity));
+    }
+
+    /**
+     * How far the camera sits behind the player's eyes, so a raycast re-based onto
+     * the camera can extend its range and keep the same reach in front of the
+     * player. Zero while the shoulder offset is disengaged.
+     */
+    public static double crosshairRaySetback() {
+        Minecraft mc = Minecraft.getInstance();
+        if (!shoulderEngaged() || mc.player == null) {
+            return 0.0;
+        }
+        Camera camera = mc.gameRenderer.getMainCamera();
+        return camera.isInitialized() ? camera.getPosition().distanceTo(mc.player.getEyePosition()) : 0.0;
+    }
+
+    /** Direction of the crosshair ray, or null while the shoulder offset is disengaged. */
+    public static Vec3 crosshairRayDirection() {
+        Minecraft mc = Minecraft.getInstance();
+        if (!shoulderEngaged() || mc.player == null) {
+            return null;
+        }
+        Camera camera = mc.gameRenderer.getMainCamera();
+        if (!camera.isInitialized()) {
+            return null;
+        }
+        Vector3f forward = camera.getLookVector();
+        return new Vec3(forward.x(), forward.y(), forward.z());
     }
 
     /**
