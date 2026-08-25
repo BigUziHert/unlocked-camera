@@ -466,6 +466,7 @@ public class UnlockedCameraClient {
     private static HitResult gapWalkClip(Vec3 origin, Vec3 direction, Vec3 end,
             double playerDepth, ClipContext.Block shapeMode, Entity entity) {
         Minecraft mc = Minecraft.getInstance();
+        double maxHitSqr = Mth.square(end.subtract(origin).length() + 2.0);
         double startParam = 0.0;
         HitResult hit;
         for (int i = 0; ; i++) {
@@ -476,8 +477,15 @@ public class UnlockedCameraClient {
                     || hit.getType() != HitResult.Type.BLOCK) {
                 break;
             }
+            // Sable sublevel hits report plot-space coordinates thousands of
+            // blocks away. They can never be gap blocks, and walking them would
+            // compute a garbage restart point and re-clip a ray across half the
+            // world every frame — freezing the game. Accept them as-is.
+            if (blockHit.getLocation().distanceToSqr(origin) > maxHitSqr) {
+                break;
+            }
             double exit = rayExitOfBlock(blockHit.getBlockPos(), origin, direction);
-            if (exit >= playerDepth) {
+            if (exit >= playerDepth || exit <= startParam || !Double.isFinite(exit)) {
                 break;
             }
             startParam = exit + 1.0E-4;
