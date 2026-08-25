@@ -10,6 +10,7 @@
   "client": [
     "CameraInvoker",
     "CameraMixin",
+    "ClientPacketListenerMixin",
     "CreateBigOutlinesMixin",
     "CreateContraptionRayMixin",
     "CreateRaycastMixin",

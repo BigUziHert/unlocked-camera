@@ -251,10 +251,12 @@ public class UnlockedCameraClient {
     }
 
     /**
-     * Projectiles fly along the PLAYER's rotation, which the camera-ray pick can't
-     * influence. While drawing a bow/crossbow/trident with the shoulder engaged,
-     * turn the player toward the camera ray's target so shots land where the
-     * center crosshair points.
+     * Projectiles fly along the PLAYER's rotation. The packet layer corrects
+     * the shot itself at any distance (see ClientPacketListenerMixin); this
+     * turn is the cosmetic half — while drawing a bow/crossbow/trident, face
+     * the body toward the crosshair target so the pose reads right. Close
+     * targets are left alone: the swing they need cannot be held against
+     * Better Third Person and the body just thrashes.
      */
     private static void turnPlayerWhileAiming(Minecraft mc) {
         if (!shoulderEngaged() || mc.level == null || !mc.player.isUsingItem()) {
@@ -264,9 +266,36 @@ public class UnlockedCameraClient {
         if (anim != UseAnim.BOW && anim != UseAnim.CROSSBOW && anim != UseAnim.SPEAR) {
             return;
         }
+        float[] aim = crosshairAimAngles();
+        if (aim == null || aim[2] < MIN_AIM_TARGET_DISTANCE) {
+            return;
+        }
+        // Approach in damped steps via the nearest-equivalent yaw: yaw
+        // accumulates instead of wrapping, and the body/camera/aim feedback
+        // loop oscillates near straight up/down if snapped.
+        float yawDelta = Mth.wrapDegrees(aim[0] - mc.player.getYRot());
+        float pitchDelta = aim[1] - mc.player.getXRot();
+        if (Math.abs(yawDelta) < AIM_DEADBAND && Math.abs(pitchDelta) < AIM_DEADBAND) {
+            return;
+        }
+        mc.player.setYRot(mc.player.getYRot() + Mth.clamp(yawDelta, -MAX_AIM_STEP, MAX_AIM_STEP));
+        mc.player.setXRot(Mth.clamp(
+                mc.player.getXRot() + Mth.clamp(pitchDelta, -MAX_AIM_STEP, MAX_AIM_STEP), -90.0f, 90.0f));
+    }
+
+    /**
+     * The yaw/pitch the player must face for a projectile fired from their eyes
+     * to land where the centered crosshair points, or null while the shoulder
+     * offset is disengaged. Returns {yaw, pitch, distance from eye to target}.
+     */
+    public static float[] crosshairAimAngles() {
+        Minecraft mc = Minecraft.getInstance();
+        if (!shoulderEngaged() || mc.level == null || mc.player == null) {
+            return null;
+        }
         Camera camera = mc.gameRenderer.getMainCamera();
         if (!camera.isInitialized()) {
-            return;
+            return null;
         }
 
         Vector3f forward = camera.getLookVector();
@@ -274,17 +303,27 @@ public class UnlockedCameraClient {
         Vec3 origin = camera.getPosition();
         Vec3 eye = mc.player.getEyePosition();
         double range = PROJECTILE_AIM_RANGE + origin.distanceTo(eye);
-        // Start the clip at the player's depth along the ray so blocks sitting
-        // between the camera and the player can never become the target — a hit
-        // back there lands behind the body and flips it around. COLLIDER, not
-        // OUTLINE, because projectiles fly through non-colliding blocks (tall
-        // grass, flowers), so aim must ignore them too.
         double playerDepth = Math.max(0.0, eye.subtract(origin).dot(direction));
-        HitResult hit = mc.level.clip(new ClipContext(
-                origin.add(direction.scale(playerDepth)), origin.add(direction.scale(range)),
-                ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, mc.player));
+        Vec3 end = origin.add(direction.scale(range));
+        // COLLIDER, not OUTLINE: projectiles fly through non-colliding blocks
+        // (tall grass, flowers), so aim must ignore them too. The gap walk keeps
+        // blocks between the camera and the player from becoming the target.
+        HitResult hit = gapWalkClip(origin, direction, end, playerDepth,
+                ClipContext.Block.COLLIDER, mc.player);
 
         Vec3 aimPoint = hit.getLocation();
+        if (hit instanceof BlockHitResult buriedHit && hit.getType() == HitResult.Type.BLOCK) {
+            // Bury the aim point toward the struck block's CENTRE (capped). A
+            // hit on an edge or corner is a graze — the random projectile spread
+            // then decides each shot, with misses sailing far past. Pulling the
+            // point into the block's meat makes grazes stick where the crosshair
+            // touches; for face-centre hits the shift is invisible.
+            Vec3 toCenter = Vec3.atCenterOf(buriedHit.getBlockPos()).subtract(aimPoint);
+            double toCenterLen = toCenter.length();
+            if (toCenterLen > 1.0E-4) {
+                aimPoint = aimPoint.add(toCenter.scale(Math.min(0.2, toCenterLen * 0.35) / toCenterLen));
+            }
+        }
         // Sable sublevel hits are in plot-space coordinates with no usable world
         // direction — but Sable's sublevel-aware HitResult#distanceTo still gives
         // the TRUE squared world distance from the player. The hit lies on our
@@ -303,24 +342,14 @@ public class UnlockedCameraClient {
 
         Vec3 aim = aimPoint.subtract(eye);
         double horizontal = Math.sqrt(aim.x * aim.x + aim.z * aim.z);
-        if (aim.length() < MIN_AIM_TARGET_DISTANCE || horizontal < 1.0E-4) {
-            return; // too close to correct for; keep current rotation
+        if (aim.length() < 0.5 || horizontal < 1.0E-4) {
+            return null; // target is basically at the player; keep current rotation
         }
         float rawYaw = (float) Math.toDegrees(Mth.atan2(aim.z, aim.x)) - 90.0f;
-        float pitch = Mth.clamp((float) -Math.toDegrees(Mth.atan2(aim.y, horizontal)), -90.0f, 90.0f);
-        // Minecraft yaw accumulates instead of wrapping — assigning a distant
-        // equivalent makes the renderer spin the long way round — so express the
-        // target relative to the current yaw. Approach it in damped steps: the
-        // body can influence the camera, and the camera defines the next tick's
-        // aim, a loop that oscillates violently near straight up/down if snapped.
-        float yawDelta = Mth.wrapDegrees(rawYaw - mc.player.getYRot());
-        float pitchDelta = pitch - mc.player.getXRot();
-        if (Math.abs(yawDelta) < AIM_DEADBAND && Math.abs(pitchDelta) < AIM_DEADBAND) {
-            return;
-        }
-        mc.player.setYRot(mc.player.getYRot() + Mth.clamp(yawDelta, -MAX_AIM_STEP, MAX_AIM_STEP));
-        mc.player.setXRot(Mth.clamp(
-                mc.player.getXRot() + Mth.clamp(pitchDelta, -MAX_AIM_STEP, MAX_AIM_STEP), -90.0f, 90.0f));
+        float currentYaw = mc.player.getYRot();
+        float yaw = currentYaw + Mth.wrapDegrees(rawYaw - currentYaw);
+        float pitch = (float) -Math.toDegrees(Mth.atan2(aim.y, horizontal));
+        return new float[] {yaw, Mth.clamp(pitch, -90.0f, 90.0f), (float) aim.length()};
     }
 
     /** Mods like Sable extend the CameraType enum; only handle the vanilla three. */
