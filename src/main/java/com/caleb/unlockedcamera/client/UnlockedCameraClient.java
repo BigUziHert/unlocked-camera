@@ -227,6 +227,16 @@ public class UnlockedCameraClient {
         }
     }
 
+    /** Closest aim target the body still turns for; nearer than this the
+     * required swing is too extreme to hold against Better Third Person and the
+     * body just thrashes. Below it the shot is left alone, as vanilla would. */
+    private static final float MIN_AIM_TARGET_DISTANCE = 4.0f;
+    /** Most the aimed body rotation may change in one tick, damping any
+     * aim/camera/body feedback oscillation into a convergence. */
+    private static final float MAX_AIM_STEP = 15.0f;
+    /** Corrections smaller than this are not worth applying. */
+    private static final float AIM_DEADBAND = 0.25f;
+
     /** How far out the camera ray converges projectile aim, in blocks. */
     private static final float PROJECTILE_AIM_RANGE = 64.0f;
 
@@ -293,13 +303,24 @@ public class UnlockedCameraClient {
 
         Vec3 aim = aimPoint.subtract(eye);
         double horizontal = Math.sqrt(aim.x * aim.x + aim.z * aim.z);
-        if (aim.length() < 0.5 || horizontal < 1.0E-4) {
-            return; // target is basically at the player; keep current rotation
+        if (aim.length() < MIN_AIM_TARGET_DISTANCE || horizontal < 1.0E-4) {
+            return; // too close to correct for; keep current rotation
         }
-        float yaw = (float) Math.toDegrees(Mth.atan2(aim.z, aim.x)) - 90.0f;
-        float pitch = (float) -Math.toDegrees(Mth.atan2(aim.y, horizontal));
-        mc.player.setYRot(yaw);
-        mc.player.setXRot(Mth.clamp(pitch, -90.0f, 90.0f));
+        float rawYaw = (float) Math.toDegrees(Mth.atan2(aim.z, aim.x)) - 90.0f;
+        float pitch = Mth.clamp((float) -Math.toDegrees(Mth.atan2(aim.y, horizontal)), -90.0f, 90.0f);
+        // Minecraft yaw accumulates instead of wrapping — assigning a distant
+        // equivalent makes the renderer spin the long way round — so express the
+        // target relative to the current yaw. Approach it in damped steps: the
+        // body can influence the camera, and the camera defines the next tick's
+        // aim, a loop that oscillates violently near straight up/down if snapped.
+        float yawDelta = Mth.wrapDegrees(rawYaw - mc.player.getYRot());
+        float pitchDelta = pitch - mc.player.getXRot();
+        if (Math.abs(yawDelta) < AIM_DEADBAND && Math.abs(pitchDelta) < AIM_DEADBAND) {
+            return;
+        }
+        mc.player.setYRot(mc.player.getYRot() + Mth.clamp(yawDelta, -MAX_AIM_STEP, MAX_AIM_STEP));
+        mc.player.setXRot(Mth.clamp(
+                mc.player.getXRot() + Mth.clamp(pitchDelta, -MAX_AIM_STEP, MAX_AIM_STEP), -90.0f, 90.0f));
     }
 
     /** Mods like Sable extend the CameraType enum; only handle the vanilla three. */
