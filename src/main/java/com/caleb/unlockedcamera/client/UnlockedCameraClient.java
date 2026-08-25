@@ -290,12 +290,29 @@ public class UnlockedCameraClient {
      * Points the player's body down the crosshair ray, so projectiles — which fly
      * along the body's rotation — land where the crosshair points.
      */
+    /** Most the aimed body rotation may change in one tick, damping any oscillation. */
+    private static final float MAX_AIM_STEP = 15.0f;
+    /** Corrections smaller than this are not worth applying. */
+    private static final float AIM_DEADBAND = 0.25f;
+
     public static void aimPlayerAlongCrosshair(Player player) {
         float[] angles = crosshairAimAngles();
-        if (angles != null && player == Minecraft.getInstance().player) {
-            player.setYRot(angles[0]);
-            player.setXRot(angles[1]);
+        if (angles == null || player != Minecraft.getInstance().player) {
+            return;
         }
+        // Applied in steps rather than snapped. Aiming rotates the body, the body
+        // can influence the camera, and the camera defines the next frame's aim —
+        // a loop that oscillates violently near straight up/down, where the aim
+        // vector's horizontal component collapses and its yaw becomes meaningless.
+        // Stepping turns any such loop into a convergence.
+        float yawDelta = Mth.wrapDegrees(angles[0] - player.getYRot());
+        float pitchDelta = angles[1] - player.getXRot();
+        if (Math.abs(yawDelta) < AIM_DEADBAND && Math.abs(pitchDelta) < AIM_DEADBAND) {
+            return;
+        }
+        player.setYRot(player.getYRot() + Mth.clamp(yawDelta, -MAX_AIM_STEP, MAX_AIM_STEP));
+        player.setXRot(Mth.clamp(
+                player.getXRot() + Mth.clamp(pitchDelta, -MAX_AIM_STEP, MAX_AIM_STEP), -90.0f, 90.0f));
     }
 
 
@@ -316,14 +333,27 @@ public class UnlockedCameraClient {
 
         Vector3f forward = camera.getLookVector();
         Vec3 direction = new Vec3(forward.x(), forward.y(), forward.z());
-        Vec3 origin = camera.getPosition();
+        Vec3 origin = crosshairRayOrigin();
+        if (origin == null) {
+            return null;
+        }
         Vec3 eye = mc.player.getEyePosition();
         double range = PROJECTILE_AIM_RANGE + origin.distanceTo(eye);
+        // COLLIDER, not OUTLINE: a projectile flies straight through grass,
+        // flowers and other pass-through blocks, so aiming at one is wrong. It
+        // also stops the ray dead on grass beside the player — which sits at the
+        // player's own depth and so survives the origin adjustment — leaving a
+        // degenerate aim vector that throws the shot off in a random direction.
         HitResult hit = mc.level.clip(new ClipContext(
                 origin, origin.add(direction.scale(range)),
-                ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, mc.player));
+                ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, mc.player));
 
         Vec3 aimPoint = hit.getLocation();
+        // A target essentially on top of the player gives no usable direction;
+        // converge far down the ray instead.
+        if (aimPoint.distanceToSqr(eye) < 1.5 * 1.5) {
+            aimPoint = origin.add(direction.scale(range));
+        }
         // Sable sublevel hits are in plot-space coordinates with no usable world
         // direction — but Sable's sublevel-aware HitResult#distanceTo still gives
         // the TRUE squared world distance from the player. The hit lies on our
@@ -345,7 +375,15 @@ public class UnlockedCameraClient {
         if (aim.length() < 0.5 || horizontal < 1.0E-4) {
             return null; // target is basically at the player; keep current rotation
         }
-        float yaw = (float) Math.toDegrees(Mth.atan2(aim.z, aim.x)) - 90.0f;
+        float rawYaw = (float) Math.toDegrees(Mth.atan2(aim.z, aim.x)) - 90.0f;
+        // Minecraft yaw accumulates instead of wrapping, so the player's current
+        // value can be any number of turns away from the one atan2 produces (e.g.
+        // -269.89 and 89.27 are the same heading). Assigning the distant
+        // equivalent makes the renderer interpolate the long way round — a ~360
+        // degree spin every tick. Express the target relative to the current yaw
+        // so it is always the nearest equivalent.
+        float currentYaw = Minecraft.getInstance().player.getYRot();
+        float yaw = currentYaw + Mth.wrapDegrees(rawYaw - currentYaw);
         float pitch = (float) -Math.toDegrees(Mth.atan2(aim.y, horizontal));
         return new float[] {yaw, Mth.clamp(pitch, -90.0f, 90.0f)};
     }
@@ -474,7 +512,10 @@ public class UnlockedCameraClient {
             return null;
         }
         Vec3 playerEye = entity.getEyePosition(partialTick);
-        Vec3 origin = camera.getPosition();
+        Vec3 origin = crosshairRayOrigin();
+        if (origin == null) {
+            return null;
+        }
         Vector3f forward = camera.getLookVector();
         Vec3 direction = new Vec3(forward.x(), forward.y(), forward.z());
 
@@ -570,7 +611,19 @@ public class UnlockedCameraClient {
             return null;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
-        return camera.isInitialized() ? camera.getPosition() : null;
+        if (!camera.isInitialized()) {
+            return null;
+        }
+        // Start at the player's depth along the ray rather than at the camera.
+        // The camera sits behind the player, so a ray from it hits anything in
+        // between first — grass, a wall it is peeking through — and that hit lies
+        // BEHIND the player, which flips aim and targeting by ~180 degrees. The
+        // crosshair is unaffected: the ray is the same line, just started later.
+        Vector3f forward = camera.getLookVector();
+        Vec3 direction = new Vec3(forward.x(), forward.y(), forward.z());
+        Vec3 camPos = camera.getPosition();
+        double depth = mc.player.getEyePosition().subtract(camPos).dot(direction);
+        return depth > 0.0 ? camPos.add(direction.scale(depth)) : camPos;
     }
 
 
@@ -626,7 +679,10 @@ public class UnlockedCameraClient {
             return null;
         }
         Vector3f forward = camera.getLookVector();
-        Vec3 origin = camera.getPosition();
+        Vec3 origin = crosshairRayOrigin();
+        if (origin == null) {
+            return null;
+        }
         Vec3 end = origin.add(new Vec3(forward.x(), forward.y(), forward.z())
                 .scale(hitDistance + crosshairRaySetback()));
         return mc.level.clip(new ClipContext(origin, end, ClipContext.Block.OUTLINE,
@@ -643,8 +699,8 @@ public class UnlockedCameraClient {
         if (!shoulderEngaged() || mc.player == null) {
             return 0.0;
         }
-        Camera camera = mc.gameRenderer.getMainCamera();
-        return camera.isInitialized() ? camera.getPosition().distanceTo(mc.player.getEyePosition()) : 0.0;
+        Vec3 origin = crosshairRayOrigin();
+        return origin == null ? 0.0 : origin.distanceTo(mc.player.getEyePosition());
     }
 
     /** Direction of the crosshair ray, or null while the shoulder offset is disengaged. */
