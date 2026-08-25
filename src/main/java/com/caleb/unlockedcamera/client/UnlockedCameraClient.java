@@ -406,6 +406,47 @@ public class UnlockedCameraClient {
     }
 
     /**
+     * Clip along the crosshair ray, skipping blocks the ray fully EXITS before
+     * reaching the player's depth — those sit wholly between the camera and the
+     * player, i.e. behind the character, and targeting them places blocks or
+     * breaks things backwards. A block the crosshair rests on can straddle the
+     * player's depth (a clip starting at that depth would begin inside it and
+     * tunnel through), so it is kept.
+     */
+    private static HitResult gapWalkClip(Vec3 origin, Vec3 direction, Vec3 end,
+            double playerDepth, ClipContext.Block shapeMode, Entity entity) {
+        Minecraft mc = Minecraft.getInstance();
+        double startParam = 0.0;
+        HitResult hit;
+        for (int i = 0; ; i++) {
+            hit = mc.level.clip(new ClipContext(
+                    origin.add(direction.scale(startParam)), end,
+                    shapeMode, ClipContext.Fluid.NONE, entity));
+            if (i >= 8 || !(hit instanceof BlockHitResult blockHit)
+                    || hit.getType() != HitResult.Type.BLOCK) {
+                break;
+            }
+            double exit = rayExitOfBlock(blockHit.getBlockPos(), origin, direction);
+            if (exit >= playerDepth) {
+                break;
+            }
+            startParam = exit + 1.0E-4;
+        }
+        return hit;
+    }
+
+    /** Distance along the ray (unit direction) where it leaves the block's 1x1x1 cell. */
+    private static double rayExitOfBlock(BlockPos pos, Vec3 origin, Vec3 dir) {
+        double tx = dir.x == 0.0 ? Double.POSITIVE_INFINITY
+                : ((dir.x > 0.0 ? pos.getX() + 1 : pos.getX()) - origin.x) / dir.x;
+        double ty = dir.y == 0.0 ? Double.POSITIVE_INFINITY
+                : ((dir.y > 0.0 ? pos.getY() + 1 : pos.getY()) - origin.y) / dir.y;
+        double tz = dir.z == 0.0 ? Double.POSITIVE_INFINITY
+                : ((dir.z > 0.0 ? pos.getZ() + 1 : pos.getZ()) - origin.z) / dir.z;
+        return Math.min(tx, Math.min(ty, tz));
+    }
+
+    /**
      * Called from {@link com.caleb.unlockedcamera.mixin.GameRendererMixin} in place
      * of vanilla's pick while the shoulder offset is engaged: raycast from the
      * CAMERA through the center crosshair, so whatever sits under the crosshair is
@@ -432,10 +473,11 @@ public class UnlockedCameraClient {
 
         double setback = origin.distanceTo(playerEye);
         double maxRange = Math.max(blockInteractionRange, entityInteractionRange) + setback;
+        double playerDepth = Math.max(0.0, playerEye.subtract(origin).dot(direction));
 
         Vec3 end = origin.add(direction.scale(maxRange));
-        HitResult blockHit = mc.level.clip(new ClipContext(
-                origin, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, entity));
+        HitResult blockHit = gapWalkClip(origin, direction, end, playerDepth,
+                ClipContext.Block.OUTLINE, entity);
         // Geometric distance along our ray, for the entity sweep. Sable sublevel
         // hits report plot-space locations thousands of blocks away — treat those
         // as "full ray" here; reach is validated separately below.
@@ -443,10 +485,14 @@ public class UnlockedCameraClient {
                 ? blockHit.getLocation().distanceToSqr(origin)
                 : Mth.square(maxRange);
         double entitySearch = Math.min(Math.sqrt(blockGeomSqr), maxRange);
+        // Sweep for entities only from the player's depth outward, for the same
+        // reason the block clip walks the gap: an entity between the camera and
+        // the player is behind the character, not under the crosshair.
+        Vec3 sweepStart = origin.add(direction.scale(Math.min(playerDepth, entitySearch)));
         Vec3 entityEnd = origin.add(direction.scale(entitySearch));
-        AABB searchBox = new AABB(origin, entityEnd).inflate(1.0);
+        AABB searchBox = new AABB(sweepStart, entityEnd).inflate(1.0);
         EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
-                entity, origin, entityEnd, searchBox,
+                entity, sweepStart, entityEnd, searchBox,
                 target -> !target.isSpectator() && target.isPickable(), Mth.square(entitySearch));
 
         return entityHit != null && entityHit.getLocation().distanceToSqr(origin) < blockGeomSqr
