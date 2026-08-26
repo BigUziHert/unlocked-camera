@@ -8,6 +8,7 @@
   "unlockedcamera.configuration.title": "Unlocked Camera Configs",
   "unlockedcamera.configuration.section.unlockedcamera.client.toml": "Client Settings",
   "unlockedcamera.configuration.section.unlockedcamera.client.toml.title": "Client Settings",
+  "unlockedcamera.configuration.toggleMod": "Toggle Mod",
   "unlockedcamera.configuration.enableUnlockedCamera": "Enable Unlocked Camera",
   "unlockedcamera.configuration.disableVanillaThirdPerson": "Disable Vanilla Third Person",
   "unlockedcamera.configuration.enableFreelook": "Enable Freelook",

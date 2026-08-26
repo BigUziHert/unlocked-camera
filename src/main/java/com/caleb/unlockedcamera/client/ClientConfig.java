@@ -5,6 +5,10 @@ import net.neoforged.neoforge.common.ModConfigSpec;
 public final class ClientConfig {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
 
+    public static final ModConfigSpec.BooleanValue TOGGLE_MOD = BUILDER
+            .comment("Master switch: set to false to disable this mod entirely.")
+            .define("toggleMod", true);
+
     public static final ModConfigSpec.BooleanValue ENABLE_UNLOCKED_CAMERA = BUILDER
             .comment("Enable the unlocked camera as a fourth view in the perspective cycle.")
             .define("enableUnlockedCamera", true);
@@ -62,12 +66,19 @@ public final class ClientConfig {
     private ClientConfig() {
     }
 
+    /** The master switch gates every feature: both getters below fold it in,
+     * and everything else in the mod flows through them (or through the active
+     * state they control), so nothing needs its own check. */
+    static boolean modEnabled() {
+        return TOGGLE_MOD.get();
+    }
+
     static boolean unlockedCameraEnabled() {
-        return ENABLE_UNLOCKED_CAMERA.get();
+        return modEnabled() && ENABLE_UNLOCKED_CAMERA.get();
     }
 
     static boolean freelookEnabled() {
-        return ENABLE_FREELOOK.get();
+        return modEnabled() && ENABLE_FREELOOK.get();
     }
 
     static boolean freelookKeepDirection() {
