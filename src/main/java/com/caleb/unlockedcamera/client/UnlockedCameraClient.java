@@ -257,6 +257,11 @@ public class UnlockedCameraClient {
     private static final float MAX_AIM_STEP = 15.0f;
     /** Corrections smaller than this are not worth applying. */
     private static final float AIM_DEADBAND = 0.25f;
+    /** Beyond this pitch the body is left alone: rotating it that steeply is a
+     * fight with Better Third Person and the body flips between the two. The
+     * shot itself is still corrected on the wire, so only the cosmetic turn is
+     * given up where it cannot be won. */
+    private static final float MAX_AIM_PITCH = 70.0f;
 
     /** How far out the camera ray converges projectile aim, in blocks. */
     private static final float PROJECTILE_AIM_RANGE = 64.0f;
@@ -288,7 +293,7 @@ public class UnlockedCameraClient {
             return;
         }
         float[] aim = crosshairAimAngles();
-        if (aim == null || aim[2] < MIN_AIM_TARGET_DISTANCE) {
+        if (aim == null || aim[2] < MIN_AIM_TARGET_DISTANCE || Math.abs(aim[1]) > MAX_AIM_PITCH) {
             return;
         }
         // Approach in damped steps via the nearest-equivalent yaw: yaw
