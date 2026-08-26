@@ -9,13 +9,13 @@ public final class ClientConfig {
             .comment("Enable the unlocked camera as a fourth view in the perspective cycle.")
             .define("enableUnlockedCamera", true);
 
-    public static final ModConfigSpec.BooleanValue DISABLE_VANILLA_THIRD_PERSON = BUILDER
-            .comment("Skip vanilla's behind-the-player third person in the perspective cycle, going straight from first person to the unlocked camera.")
-            .define("disableVanillaThirdPerson", false);
-
     public static final ModConfigSpec.BooleanValue ENABLE_FREELOOK = BUILDER
             .comment("Enable freelook (hold the freelook key in first person to look around without turning).")
             .define("enableFreelook", true);
+
+    public static final ModConfigSpec.BooleanValue DISABLE_VANILLA_THIRD_PERSON = BUILDER
+            .comment("Skip vanilla's behind-the-player third person in the perspective cycle, going straight from first person to the unlocked camera.")
+            .define("disableVanillaThirdPerson", false);
 
     public static final ModConfigSpec.BooleanValue FREELOOK_KEEP_DIRECTION = BUILDER
             .comment("When releasing the freelook key, turn the player to face where you were looking instead of easing the view back to where it was.")
