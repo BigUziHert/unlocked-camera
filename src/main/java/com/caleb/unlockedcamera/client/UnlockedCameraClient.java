@@ -10,6 +10,11 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.EnderpearlItem;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ProjectileItem;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
@@ -217,6 +222,22 @@ public class UnlockedCameraClient {
             cyclePerspective(mc);
         }
 
+        // Keep the server's rotation glued to the crosshair while a ranged or
+        // thrown item is held. Rotation only reaches the server inside movement
+        // packets, vanilla only sends one when the BODY turned, and the head —
+        // which crossbows fire along — lags a further tick behind, so syncing
+        // at click time is always one tick too late. Holding it continuously
+        // means any click fires true. The client body is never touched.
+        float[] heldAim = continuousAimAngles();
+        if (heldAim != null && mc.getConnection() != null
+                && (lastSentAim == null
+                        || Math.abs(Mth.wrapDegrees(heldAim[0] - lastSentAim[0])) > 0.1f
+                        || Math.abs(heldAim[1] - lastSentAim[1]) > 0.1f)) {
+            mc.getConnection().send(new ServerboundMovePlayerPacket.Rot(
+                    heldAim[0], heldAim[1], mc.player.onGround()));
+            lastSentAim = heldAim;
+        }
+
         // Something else (another mod, spectator, etc.) changed the view out from under us.
         if (active && mc.options.getCameraType() != CameraType.THIRD_PERSON_BACK) {
             active = false;
@@ -350,6 +371,33 @@ public class UnlockedCameraClient {
         float yaw = currentYaw + Mth.wrapDegrees(rawYaw - currentYaw);
         float pitch = (float) -Math.toDegrees(Mth.atan2(aim.y, horizontal));
         return new float[] {yaw, Mth.clamp(pitch, -90.0f, 90.0f), (float) aim.length()};
+    }
+
+    private static float[] lastSentAim;
+
+    /**
+     * The crosshair aim to hold the server's rotation at while a ranged or
+     * thrown item is in hand — null otherwise, letting rotation flow normally.
+     */
+    public static float[] continuousAimAngles() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || !holdingRangedItem(mc)) {
+            return null;
+        }
+        return crosshairAimAngles();
+    }
+
+    private static boolean holdingRangedItem(Minecraft mc) {
+        for (InteractionHand hand : InteractionHand.values()) {
+            ItemStack stack = mc.player.getItemInHand(hand);
+            UseAnim anim = stack.getUseAnimation();
+            if (anim == UseAnim.BOW || anim == UseAnim.CROSSBOW || anim == UseAnim.SPEAR
+                    || stack.getItem() instanceof ProjectileItem
+                    || stack.getItem() instanceof EnderpearlItem) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Mods like Sable extend the CameraType enum; only handle the vanilla three. */
