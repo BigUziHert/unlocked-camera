@@ -21,10 +21,13 @@ option makes it permanent.
 slides over the shoulder; press `X` (rebindable) to swap sides. The offset clips
 against walls so it never pokes through blocks.
 **Freelook:** in first person, hold `Left Alt` (rebindable) and move the mouse to
-look around without turning your body — movement direction and aim stay put.
-Clicking mid-freelook snaps your body to where you're looking, so the interaction
-lands on the crosshair. On release the view eases back to your original facing;
-enable `freelookKeepDirection` to keep facing where you were looking instead.
+look around without turning your body — movement direction stays put, and the
+crosshair stays truthful: mining, placing, and projectiles land where the
+crosshair points without your body turning, while other players see your head
+follow the deflected view. On release the view eases back to your original
+facing; enable `freelookKeepDirection` to keep facing where you were looking
+instead — with it on, clicking mid-freelook also snaps your body to the
+crosshair.
 **Better Third Person compatibility:** the mod never touches camera rotation, so
 BTP's free orbit is untouched; targeting through the center crosshair works the
 same with or without BTP.
@@ -36,6 +39,7 @@ dependency on it.
 ## Config
 Settings live in `config/unlockedcamera-client.toml` (also editable in-game via
 Mods > Unlocked Camera > Config; changes apply live):
+- `toggleMod` — master switch that disables the entire mod when off, default on
 - `enableUnlockedCamera` — toggle the fourth perspective on/off, default on
 - `disableVanillaThirdPerson` — F5 goes straight from first person to the
   unlocked camera, skipping vanilla third person, default off
