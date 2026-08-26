@@ -51,6 +51,22 @@ approval.
    them in sync if keys ever change (renaming TOML keys resets saved configs;
    prefer lang-only changes).
 
+## Settled by design — do not "fix"
+
+- Entering the camera starts at vanilla's 4-block distance and glides to the
+  configured zoom (even when min zoom > 4): Caleb prefers the seamless F5
+  transition over an instant jump-cut. (Caleb's explicit call, 2026-08-26.)
+
+Known OPEN BUG (not accepted): the projectile aim ray is blocks-only, so a
+shot converges past an entity standing under the crosshair and can miss it
+sideways at close range — crosshairAimAngles needs the entity sweep that
+cameraRayPick already has.
+
+Open questions Caleb has NOT ruled on: whether interaction reach should stay
+feet-based (HitResult#distanceTo — currently kept for Sable sublevel
+correctness) and whether Undo should also rewind a linked zoom slider's push.
+Ask him before changing either.
+
 ## Process
 
 Measure first: temporary logging pinned every hard bug here in one round after
