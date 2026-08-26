@@ -167,6 +167,7 @@ public class UnlockedCameraClient {
         if (mc.player == null) {
             active = false;
             resumeAfterSeat = false;
+            dropHeldAim();
             return;
         }
 
@@ -181,6 +182,7 @@ public class UnlockedCameraClient {
         // Unlocked camera disabled in config: leave the perspective key to vanilla.
         if (!ClientConfig.unlockedCameraEnabled()) {
             active = false;
+            dropHeldAim();
             return;
         }
 
@@ -193,6 +195,7 @@ public class UnlockedCameraClient {
                 resumeAfterSeat = true;
                 active = false;
             }
+            dropHeldAim();
             return;
         }
 
@@ -215,6 +218,7 @@ public class UnlockedCameraClient {
         // vanilla view.
         if (!isVanillaCameraType(mc.options.getCameraType())) {
             active = false;
+            dropHeldAim();
             return;
         }
 
@@ -391,6 +395,19 @@ public class UnlockedCameraClient {
     private static float[] cachedHeldAim;
     private static long heldAimTicks;
     private static long lastAimSendTick;
+
+    /**
+     * Forget the held aim on any tick path that skips recomputing it. The
+     * packet rewrite reads the cache unconditionally, so a stale value would
+     * keep stamping an old direction into every outgoing rotation — while
+     * seated in a Sable contraption, or with the mod toggled off entirely.
+     * Also forget what was last sent, so resuming re-syncs the server even if
+     * the fresh aim happens to match the stale one.
+     */
+    private static void dropHeldAim() {
+        cachedHeldAim = null;
+        lastSentAim = null;
+    }
 
     /**
      * The crosshair aim to hold the server's rotation at while a ranged or
