@@ -228,14 +228,23 @@ public class UnlockedCameraClient {
         // which crossbows fire along — lags a further tick behind, so syncing
         // at click time is always one tick too late. Holding it continuously
         // means any click fires true. The client body is never touched.
-        float[] heldAim = continuousAimAngles();
-        if (heldAim != null && mc.getConnection() != null
+        //
+        // Computed ONCE per tick and cached for the packet rewrites: on a Sable
+        // sublevel each raycast runs their plot-space tracing, and per-packet
+        // recomputation dropped the game to a slideshow. The extra rotation
+        // sends are throttled for the same reason — Sable also does
+        // contraption-relative work per movement packet.
+        cachedHeldAim = holdingRangedItem(mc) ? crosshairAimAngles() : null;
+        heldAimTicks++;
+        if (cachedHeldAim != null && mc.getConnection() != null
+                && heldAimTicks - lastAimSendTick >= 2
                 && (lastSentAim == null
-                        || Math.abs(Mth.wrapDegrees(heldAim[0] - lastSentAim[0])) > 0.1f
-                        || Math.abs(heldAim[1] - lastSentAim[1]) > 0.1f)) {
+                        || Math.abs(Mth.wrapDegrees(cachedHeldAim[0] - lastSentAim[0])) > 0.25f
+                        || Math.abs(cachedHeldAim[1] - lastSentAim[1]) > 0.25f)) {
             mc.getConnection().send(new ServerboundMovePlayerPacket.Rot(
-                    heldAim[0], heldAim[1], mc.player.onGround()));
-            lastSentAim = heldAim;
+                    cachedHeldAim[0], cachedHeldAim[1], mc.player.onGround()));
+            lastSentAim = cachedHeldAim;
+            lastAimSendTick = heldAimTicks;
         }
 
         // Something else (another mod, spectator, etc.) changed the view out from under us.
@@ -379,17 +388,17 @@ public class UnlockedCameraClient {
     }
 
     private static float[] lastSentAim;
+    private static float[] cachedHeldAim;
+    private static long heldAimTicks;
+    private static long lastAimSendTick;
 
     /**
      * The crosshair aim to hold the server's rotation at while a ranged or
      * thrown item is in hand — null otherwise, letting rotation flow normally.
+     * Cached once per tick by the tick handler; packet rewrites read it free.
      */
     public static float[] continuousAimAngles() {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || !holdingRangedItem(mc)) {
-            return null;
-        }
-        return crosshairAimAngles();
+        return cachedHeldAim;
     }
 
     private static boolean holdingRangedItem(Minecraft mc) {
