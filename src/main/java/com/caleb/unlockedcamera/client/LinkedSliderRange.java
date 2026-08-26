@@ -11,20 +11,25 @@ import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.Mth;
 
 /**
- * A slider range linked to a sibling option: dragging past the sibling's value
- * pushes the sibling along instead of crossing it, and the idle slider follows
- * the pushes live. Used to keep min and max zoom working together.
+ * A slider range linked to sibling options. The knob is pinned live inside
+ * {@code liveMin}..{@code liveMax} (so a threshold can stop at another option's
+ * current value), every dragged value flows through {@code onDragValue} (so a
+ * bound can push its dependents along), and the idle slider follows pushes by
+ * re-syncing from {@code ownValue}. Used to keep the zoom sliders and the
+ * shoulder threshold working together.
  */
 public record LinkedSliderRange(OptionInstance.IntRange delegate,
-        IntSupplier ownValue, IntSupplier siblingValue, IntConsumer pushSibling,
-        boolean pushesUp, IntFunction<Component> display)
+        IntSupplier ownValue, IntSupplier liveMin, IntSupplier liveMax,
+        IntConsumer onDragValue, IntFunction<Component> display)
         implements OptionInstance.SliderableValueSet<Integer> {
 
     @Override
     public Optional<Integer> validateValue(Integer value) {
-        return delegate.validateValue(value);
+        return delegate.validateValue(
+                Mth.clamp(value, liveMin.getAsInt(), liveMax.getAsInt()));
     }
 
     @Override

@@ -65,15 +65,37 @@ public abstract class ConfigScreenSliderMixin {
         // meet max and max can drop to meet min, but they can never cross.
         java.util.function.IntFunction<Component> display =
                 value -> Component.literal(unlockedcamera$format(value * step));
+        // The zoom pair pushes each other; the shoulder threshold lives inside
+        // the min..max zoom window — it stops at either bound when dragged and
+        // follows when a bound moves through it, but never moves the bounds.
         OptionInstance.ValueSet<Integer> valueSet = switch (key) {
             case "minZoom" -> new LinkedSliderRange(intRange,
                     () -> (int) Math.round(ClientConfig.MIN_ZOOM.get() / step),
-                    () -> (int) Math.round(ClientConfig.MAX_ZOOM.get() / step),
-                    v -> ClientConfig.MAX_ZOOM.set(v * step), true, display);
+                    () -> scaledMin, () -> scaledMax,
+                    v -> {
+                        if (v > (int) Math.round(ClientConfig.MAX_ZOOM.get() / step)) {
+                            ClientConfig.MAX_ZOOM.set(v * step);
+                        }
+                        if (v > (int) Math.round(ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.get() / step)) {
+                            ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.set(v * step);
+                        }
+                    }, display);
             case "maxZoom" -> new LinkedSliderRange(intRange,
                     () -> (int) Math.round(ClientConfig.MAX_ZOOM.get() / step),
+                    () -> scaledMin, () -> scaledMax,
+                    v -> {
+                        if (v < (int) Math.round(ClientConfig.MIN_ZOOM.get() / step)) {
+                            ClientConfig.MIN_ZOOM.set(v * step);
+                        }
+                        if (v < (int) Math.round(ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.get() / step)) {
+                            ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.set(v * step);
+                        }
+                    }, display);
+            case "shoulderOffsetMaxZoom" -> new LinkedSliderRange(intRange,
+                    () -> (int) Math.round(ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.get() / step),
                     () -> (int) Math.round(ClientConfig.MIN_ZOOM.get() / step),
-                    v -> ClientConfig.MIN_ZOOM.set(v * step), false, display);
+                    () -> (int) Math.round(ClientConfig.MAX_ZOOM.get() / step),
+                    v -> {}, display);
             default -> intRange;
         };
         cir.setReturnValue(new ConfigurationScreen.ConfigurationSectionScreen.Element(

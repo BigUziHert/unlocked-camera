@@ -5,6 +5,7 @@ import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractOptionSliderButton;
+import net.minecraft.util.Mth;
 
 /**
  * The slider behind {@link LinkedSliderRange}. While dragged past the sibling's
@@ -32,8 +33,15 @@ final class LinkedOptionSlider extends AbstractOptionSliderButton {
         updateMessage();
     }
 
+    private void pinKnob() {
+        double lo = range.toSliderValue(range.liveMin().getAsInt());
+        double hi = range.toSliderValue(range.liveMax().getAsInt());
+        this.value = Mth.clamp(this.value, Math.min(lo, hi), Math.max(lo, hi));
+    }
+
     @Override
     protected void updateMessage() {
+        pinKnob();
         int current = range.fromSliderValue(this.value);
         setMessage(range.display().apply(current));
         setTooltip(tooltipSupplier.apply(current));
@@ -41,11 +49,8 @@ final class LinkedOptionSlider extends AbstractOptionSliderButton {
 
     @Override
     protected void applyValue() {
-        int own = range.fromSliderValue(this.value);
-        if (range.pushesUp() ? own > range.siblingValue().getAsInt()
-                : own < range.siblingValue().getAsInt()) {
-            range.pushSibling().accept(own);
-        }
+        pinKnob();
+        range.onDragValue().accept(range.fromSliderValue(this.value));
         if (!dragging) {
             applyNow();
         }
