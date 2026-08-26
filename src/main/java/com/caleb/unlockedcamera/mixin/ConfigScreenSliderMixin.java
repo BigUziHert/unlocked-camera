@@ -1,6 +1,8 @@
 package com.caleb.unlockedcamera.mixin;
 
 import com.caleb.unlockedcamera.UnlockedCameraMod;
+import com.caleb.unlockedcamera.client.LinkedSliderRange;
+import com.caleb.unlockedcamera.client.ClientConfig;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import net.minecraft.client.OptionInstance;
@@ -58,11 +60,27 @@ public abstract class ConfigScreenSliderMixin {
         double step = span <= 2.0 ? 0.05 : (span <= 64.0 ? 0.5 : 1.0);
         int scaledMin = (int) Math.round(range.getMin() / step);
         int scaledMax = (int) Math.round(range.getMax() / step);
+        OptionInstance.IntRange intRange = new OptionInstance.IntRange(scaledMin, scaledMax);
+        // The two zoom sliders stop at each other's live value: min can rise to
+        // meet max and max can drop to meet min, but they can never cross.
+        java.util.function.IntFunction<Component> display =
+                value -> Component.literal(unlockedcamera$format(value * step));
+        OptionInstance.ValueSet<Integer> valueSet = switch (key) {
+            case "minZoom" -> new LinkedSliderRange(intRange,
+                    () -> (int) Math.round(ClientConfig.MIN_ZOOM.get() / step),
+                    () -> (int) Math.round(ClientConfig.MAX_ZOOM.get() / step),
+                    v -> ClientConfig.MAX_ZOOM.set(v * step), true, display);
+            case "maxZoom" -> new LinkedSliderRange(intRange,
+                    () -> (int) Math.round(ClientConfig.MAX_ZOOM.get() / step),
+                    () -> (int) Math.round(ClientConfig.MIN_ZOOM.get() / step),
+                    v -> ClientConfig.MIN_ZOOM.set(v * step), false, display);
+            default -> intRange;
+        };
         cir.setReturnValue(new ConfigurationScreen.ConfigurationSectionScreen.Element(
                 getTranslationComponent(key), getTooltipComponent(key, range),
                 new OptionInstance<>(getTranslationKey(key), getTooltip(key, range),
                         (caption, value) -> Component.literal(unlockedcamera$format(value * step)),
-                        new OptionInstance.IntRange(scaledMin, scaledMax), null,
+                        valueSet, null,
                         (int) Math.round(source.get() / step),
                         newValue -> {
                             double newDouble = newValue * step;
