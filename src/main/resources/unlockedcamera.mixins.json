@@ -12,6 +12,7 @@
     "CameraMixin",
     "ClientPacketListenerMixin",
     "ConfigScreenColorMixin",
+    "ConfigScreenSliderMixin",
     "CreateBigOutlinesMixin",
     "CreateContraptionRayMixin",
     "CreateRaycastMixin",

@@ -56,7 +56,6 @@ Mods > Unlocked Camera > Config; changes apply live):
 - `minZoom` — closest zoom, default 1 block
 - `maxZoom` — farthest zoom, default 12 blocks
 - `freelookYawLimit` — how far left/right freelook can swing in degrees, default 90
-  (max 180 = fully behind you)
 ## Development
 Requires JDK 21 (`gradle.properties` points Gradle at `C:/Program Files/Java/jdk-21`).
 ```powershell

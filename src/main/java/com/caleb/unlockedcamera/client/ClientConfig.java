@@ -51,11 +51,11 @@ public final class ClientConfig {
 
     public static final ModConfigSpec.DoubleValue MAX_ZOOM = BUILDER
             .comment("Farthest the unlocked camera can zoom out, in blocks.")
-            .defineInRange("maxZoom", 12.0, 4.0, 256.0);
+            .defineInRange("maxZoom", 12.0, 4.0, 64.0);
 
     public static final ModConfigSpec.DoubleValue FREELOOK_YAW_LIMIT = BUILDER
-            .comment("How far left/right freelook can swing, in degrees. 180 = look fully behind you.")
-            .defineInRange("freelookYawLimit", 90.0, 10.0, 180.0);
+            .comment("How far left/right freelook can swing, in degrees.")
+            .defineInRange("freelookYawLimit", 90.0, 10.0, 90.0);
 
     public static final ModConfigSpec SPEC = BUILDER.build();
 
