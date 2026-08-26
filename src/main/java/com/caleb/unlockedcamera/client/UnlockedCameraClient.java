@@ -398,7 +398,31 @@ public class UnlockedCameraClient {
                 ClipContext.Block.COLLIDER, mc.player);
 
         Vec3 aimPoint = hit.getLocation();
-        if (hit instanceof BlockHitResult buriedHit && hit.getType() == HitResult.Type.BLOCK) {
+
+        // A mob standing under the crosshair is the target, not the backdrop
+        // behind it: sweep entities along the ray out to the block hit, the
+        // same way interaction targeting does. (Sable plot-space block hits
+        // read as huge distances and simply allow the full-ray sweep.)
+        double blockGeomSqr = hit.getType() != HitResult.Type.MISS
+                ? aimPoint.distanceToSqr(origin)
+                : Mth.square(range);
+        double entitySearch = Math.min(Math.sqrt(blockGeomSqr), range);
+        Vec3 sweepStart = origin.add(direction.scale(Math.min(playerDepth, entitySearch)));
+        Vec3 entityEnd = origin.add(direction.scale(entitySearch));
+        EntityHitResult entityAim = ProjectileUtil.getEntityHitResult(
+                mc.player, sweepStart, entityEnd,
+                new AABB(sweepStart, entityEnd).inflate(1.0),
+                target -> !target.isSpectator() && target.isPickable(), Mth.square(entitySearch));
+        if (entityAim != null) {
+            // Nudge toward the entity's centre so spread can't graze past.
+            Vec3 entityPoint = entityAim.getLocation();
+            Vec3 toBody = entityAim.getEntity().getBoundingBox().getCenter().subtract(entityPoint);
+            double toBodyLen = toBody.length();
+            if (toBodyLen > 1.0E-4) {
+                entityPoint = entityPoint.add(toBody.scale(Math.min(0.2, toBodyLen * 0.35) / toBodyLen));
+            }
+            aimPoint = entityPoint;
+        } else if (hit instanceof BlockHitResult buriedHit && hit.getType() == HitResult.Type.BLOCK) {
             // Bury the aim point toward the struck block's CENTRE (capped). A
             // hit on an edge or corner is a graze — the random projectile spread
             // then decides each shot, with misses sailing far past. Pulling the
@@ -415,7 +439,7 @@ public class UnlockedCameraClient {
         // the TRUE squared world distance from the player. The hit lies on our
         // camera ray, so solve |origin + t*dir - playerPos|^2 = distSqr for t to
         // recover the world-space aim point exactly.
-        if (aimPoint.distanceToSqr(origin) > Mth.square(range + 1.0)) {
+        if (entityAim == null && aimPoint.distanceToSqr(origin) > Mth.square(range + 1.0)) {
             double distSqr = hit.distanceTo(mc.player);
             Vec3 cameraFromFeet = origin.subtract(mc.player.position());
             double b = 2.0 * cameraFromFeet.dot(direction);
