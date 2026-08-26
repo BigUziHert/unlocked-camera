@@ -867,16 +867,20 @@ public class UnlockedCameraClient {
     }
 
     /**
-     * Vanilla's filterHitResult, but measured from the PLAYER via
-     * {@code HitResult#distanceTo} (a squared distance) — which Sable overwrites to
-     * be sublevel-aware, so hits on Aeronautics contraptions (whose locations are
-     * in far plot-space coordinates) survive the reach check.
+     * Vanilla's filterHitResult. World-space hits are measured from the EYE,
+     * exactly like vanilla, so reach matches first person. Sable sublevel hits
+     * carry far plot-space locations with no usable raw distance — those fall
+     * back to {@code HitResult#distanceTo} (a squared distance), which Sable
+     * overwrites to be sublevel-aware, so hits on Aeronautics contraptions
+     * survive the reach check.
      */
     private static HitResult filterToPlayerRange(HitResult hit, Entity player, double range) {
         if (hit.getType() == HitResult.Type.MISS) {
             return hit;
         }
-        if (hit.distanceTo(player) > range * range) {
+        double rawEyeSqr = hit.getLocation().distanceToSqr(player.getEyePosition());
+        double distSqr = rawEyeSqr <= Mth.square(256.0f) ? rawEyeSqr : hit.distanceTo(player);
+        if (distSqr > range * range) {
             Vec3 location = hit.getLocation();
             Vec3 eye = player.getEyePosition();
             Direction direction = Direction.getNearest(
