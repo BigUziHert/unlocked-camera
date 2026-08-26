@@ -76,6 +76,9 @@ public class UnlockedCameraClient {
     private static boolean active = false;
     /** We were in the unlocked camera when a Sable seat took over; resume on dismount. */
     private static boolean resumeAfterSeat = false;
+    /** The view during the last seated tick — tells a deliberate in-seat view
+     * choice apart from Sable's own dismount behavior. */
+    private static CameraType lastSeatCameraType = null;
     private static float targetDistance = VANILLA_DISTANCE;
     private static float smoothedDistance = VANILLA_DISTANCE;
     private static long lastFrameNanos = 0L;
@@ -110,15 +113,16 @@ public class UnlockedCameraClient {
     }
 
     /**
-     * Clicking during freelook: snap the player's body to where the freelook
-     * camera points (the view itself doesn't move — the offset collapses into the
-     * real rotation), then refresh targeting so this very click lands on the
-     * crosshair. Mirrors the camera-direction snap the shoulder camera gets in
-     * third person.
+     * Clicking during freelook while Keep Freelook Direction is on: snap the
+     * player's body to where the freelook camera points (the view itself
+     * doesn't move — the offset collapses into the real rotation), then
+     * refresh targeting so this very click lands on the crosshair. With the
+     * option off, clicks interact along the body's own facing, as plain
+     * freelook implies.
      */
     static void onInteractionKeyTriggered(InputEvent.InteractionKeyMappingTriggered event) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null) {
+        if (mc.player == null || !ClientConfig.freelookKeepDirection()) {
             return;
         }
         if (Math.abs(freelookYaw) < 0.5f && Math.abs(freelookPitch) < 0.5f) {
@@ -195,22 +199,25 @@ public class UnlockedCameraClient {
                 resumeAfterSeat = true;
                 active = false;
             }
+            lastSeatCameraType = mc.options.getCameraType();
             dropHeldAim();
             return;
         }
 
-        // Dismounted from a Sable seat: Sable restores plain third-person-back,
-        // which would read as vanilla third person. Pick our camera back up with
-        // the zoom the player had before sitting down. If they left the seat's
-        // view cycle in first person, respect that instead.
-        if (resumeAfterSeat) {
-            if (mc.options.getCameraType() == CameraType.THIRD_PERSON_BACK) {
-                resumeAfterSeat = false;
+        // Dismounted from a Sable seat. What the seat's view cycle ended on
+        // decides the view now: Sable's own contraption camera exits to a first
+        // person the player never chose, so that (or the vanilla back view)
+        // resumes the unlocked camera at the pre-seat zoom — while first person
+        // or the front view chosen deliberately in the seat is kept. Wait out
+        // any lingering Sable camera type first.
+        if (resumeAfterSeat && isVanillaCameraType(mc.options.getCameraType())) {
+            resumeAfterSeat = false;
+            if (lastSeatCameraType == null || !isVanillaCameraType(lastSeatCameraType)
+                    || lastSeatCameraType == CameraType.THIRD_PERSON_BACK) {
                 active = true;
-            } else if (isVanillaCameraType(mc.options.getCameraType())) {
-                resumeAfterSeat = false;
+                setCameraType(mc, CameraType.THIRD_PERSON_BACK);
             }
-            // Still in a Sable camera type: keep waiting.
+            lastSeatCameraType = null;
         }
 
         // The camera is in a modded camera type we don't know (e.g. Sable's
@@ -224,6 +231,14 @@ public class UnlockedCameraClient {
 
         while (mc.options.keyTogglePerspective.consumeClick()) {
             cyclePerspective(mc);
+        }
+
+        // Vanilla third person shouldn't be reachable while it's disabled. If
+        // the option was turned on while already standing in it, step into the
+        // unlocked camera immediately instead of waiting for an F5 press.
+        if (!active && ClientConfig.disableVanillaThirdPerson()
+                && mc.options.getCameraType() == CameraType.THIRD_PERSON_BACK) {
+            enterCamera(mc);
         }
 
         // Keep the server's rotation glued to the crosshair while a ranged or
