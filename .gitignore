@@ -41,3 +41,6 @@ repo/
 
 # Second dev client instance
 run2/
+
+# Reference clone of another mod's source (not part of this repo)
+voxy/
