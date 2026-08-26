@@ -16,6 +16,7 @@ import net.minecraft.world.item.EnderpearlItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ProjectileItem;
 import net.minecraft.util.Mth;
+import net.minecraft.util.SmoothDouble;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
 import net.minecraft.world.item.UseAnim;
@@ -376,14 +377,17 @@ public class UnlockedCameraClient {
         Vector3f forward = camera.getLookVector();
         if (!shoulderEngaged()) {
             // First-person freelook: the camera sits at the eye, so the exact
-            // aim is simply the view direction — no parallax, no raycast.
+            // aim is simply the view direction — no parallax, no raycast. There
+            // is no ray target here, so the distance slot reports the nominal
+            // far range to keep the {yaw, pitch, distance} contract intact.
             double flHorizontal = Math.sqrt(forward.x() * forward.x() + forward.z() * forward.z());
             float flRawYaw = (float) Math.toDegrees(Mth.atan2(forward.z(), forward.x())) - 90.0f;
             float flCurrentYaw = mc.player.getYRot();
             return new float[] {
                     flCurrentYaw + Mth.wrapDegrees(flRawYaw - flCurrentYaw),
                     Mth.clamp((float) -Math.toDegrees(Mth.atan2(forward.y(), Math.max(flHorizontal, 1.0E-4))),
-                            -90.0f, 90.0f)};
+                            -90.0f, 90.0f),
+                    PROJECTILE_AIM_RANGE};
         }
         Vec3 direction = new Vec3(forward.x(), forward.y(), forward.z());
         Vec3 origin = camera.getPosition();
@@ -548,15 +552,17 @@ public class UnlockedCameraClient {
             return;
         }
 
+        // Only vertical scroll zooms (and only vertical scroll cycles the
+        // hotbar) — leave horizontal-only scroll events for other mods.
         double notches = event.getScrollDeltaY();
         if (notches != 0) {
             // Scroll up zooms in, scroll down zooms out.
             targetDistance = Mth.clamp(
                     targetDistance / (float) Math.pow(ZOOM_STEP, notches),
                     ClientConfig.minZoom(), ClientConfig.maxZoom());
+            // Swallow the scroll so it doesn't cycle the hotbar.
+            event.setCanceled(true);
         }
-        // Swallow the scroll so it doesn't cycle the hotbar.
-        event.setCanceled(true);
     }
 
     static void onCameraDistance(CalculateDetachedCameraDistanceEvent event) {
@@ -766,12 +772,16 @@ public class UnlockedCameraClient {
     /**
      * Origin of the crosshair ray (the camera position) while the shoulder offset
      * is engaged, else null. Used to redirect other mods' own eye-and-look
-     * raycasts onto the crosshair â€” without it they target whatever the player's
+     * raycasts onto the crosshair — without it they target whatever the player's
      * body faces, which the sideways offset decouples from what you see.
+     *
+     * <p>Only redirects rays cast for the LOCAL player: some injection targets
+     * (e.g. Simulated's SteeringWheelBlock) are common code, and in singleplayer
+     * the integrated server runs the same mixed class for other players' checks.
      */
-    public static Vec3 crosshairRayOrigin() {
+    public static Vec3 crosshairRayOrigin(net.minecraft.world.entity.player.Player player) {
         Minecraft mc = Minecraft.getInstance();
-        if (!crosshairAimActive() || mc.player == null) {
+        if (!crosshairAimActive() || mc.player == null || player != mc.player) {
             return null;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
@@ -783,7 +793,9 @@ public class UnlockedCameraClient {
      * Offset from the player's eye to the point on the crosshair ray that sits
      * exactly {@code distance} away from the eye. Lets other mods' "eye + look *
      * distance" targeting follow the crosshair while keeping the distance they
-     * chose â€” solving |origin + t*dir - eye| = distance for t.
+     * chose — solving |origin + t*dir - eye| = distance for t. No player guard:
+     * the only call site (the physics staff's drag handler) is a client-only
+     * class that always acts for the local player.
      *
      * <p>Returns null while the shoulder offset is disengaged, or when the
      * crosshair ray never reaches that distance from the eye.
@@ -819,11 +831,12 @@ public class UnlockedCameraClient {
     /**
      * Crosshair-aligned replacement for {@code Entity#pick}, which raycasts from
      * the entity's eye along its body look. Returns null while the shoulder offset
-     * is disengaged so the caller keeps vanilla behaviour.
+     * is disengaged, or when the pick is for someone other than the local player,
+     * so the caller keeps vanilla behaviour.
      */
     public static HitResult crosshairPick(Entity entity, double hitDistance, float partialTick, boolean hitFluids) {
         Minecraft mc = Minecraft.getInstance();
-        if (!crosshairAimActive() || mc.level == null) {
+        if (!crosshairAimActive() || mc.level == null || entity != mc.player) {
             return null;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
@@ -833,7 +846,7 @@ public class UnlockedCameraClient {
         Vector3f forward = camera.getLookVector();
         Vec3 origin = camera.getPosition();
         Vec3 end = origin.add(new Vec3(forward.x(), forward.y(), forward.z())
-                .scale(hitDistance + crosshairRaySetback()));
+                .scale(hitDistance + crosshairRaySetback(mc.player)));
         return mc.level.clip(new ClipContext(origin, end, ClipContext.Block.OUTLINE,
                 hitFluids ? ClipContext.Fluid.ANY : ClipContext.Fluid.NONE, entity));
     }
@@ -841,21 +854,23 @@ public class UnlockedCameraClient {
     /**
      * How far the camera sits behind the player's eyes, so a raycast re-based onto
      * the camera can extend its range and keep the same reach in front of the
-     * player. Zero while the shoulder offset is disengaged.
+     * player. Zero while the shoulder offset is disengaged or the raycast is for
+     * someone other than the local player.
      */
-    public static double crosshairRaySetback() {
+    public static double crosshairRaySetback(net.minecraft.world.entity.player.Player player) {
         Minecraft mc = Minecraft.getInstance();
-        if (!crosshairAimActive() || mc.player == null) {
+        if (!crosshairAimActive() || mc.player == null || player != mc.player) {
             return 0.0;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
         return camera.isInitialized() ? camera.getPosition().distanceTo(mc.player.getEyePosition()) : 0.0;
     }
 
-    /** Direction of the crosshair ray, or null while the shoulder offset is disengaged. */
-    public static Vec3 crosshairRayDirection() {
+    /** Direction of the crosshair ray, or null while the shoulder offset is
+     * disengaged or the ray is for someone other than the local player. */
+    public static Vec3 crosshairRayDirection(net.minecraft.world.entity.player.Player player) {
         Minecraft mc = Minecraft.getInstance();
-        if (!crosshairAimActive() || mc.player == null) {
+        if (!crosshairAimActive() || mc.player == null || player != mc.player) {
             return null;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
@@ -898,30 +913,50 @@ public class UnlockedCameraClient {
                 && mc.options.getCameraType() == CameraType.FIRST_PERSON;
     }
 
+    /** Freelook's own cinematic-camera smoothers, mirroring MouseHandler's
+     * smoothTurnX/Y (vanilla's stop advancing while turnPlayer is cancelled). */
+    private static final SmoothDouble freelookSmoothX = new SmoothDouble();
+    private static final SmoothDouble freelookSmoothY = new SmoothDouble();
+
     /**
      * Called from {@link com.caleb.unlockedcamera.mixin.MouseHandlerMixin} at the
      * top of {@code MouseHandler#turnPlayer}. While freelooking, accumulates the
      * mouse movement into a camera-only yaw/pitch offset and returns true so the
      * player entity itself doesn't turn.
      */
-    public static boolean freelookMouseTurn(double accumulatedDX, double accumulatedDY) {
+    public static boolean freelookMouseTurn(double accumulatedDX, double accumulatedDY, double movementTime) {
         Minecraft mc = Minecraft.getInstance();
         if (!isFreelookHeld(mc)) {
+            freelookSmoothX.reset();
+            freelookSmoothY.reset();
             return false;
         }
 
         // Vanilla's sensitivity curve (MouseHandler#turnPlayer), including the 0.15
-        // factor Entity#turn applies, so freelook feels identical to normal look.
+        // factor Entity#turn applies and the cinematic-camera smoothing, so
+        // freelook feels identical to normal look.
         double d = mc.options.sensitivity().get() * 0.6 + 0.2;
         double cubed = d * d * d;
-        double scale = (mc.player.isScoping() ? cubed : cubed * 8.0) * 0.15;
+        double dx;
+        double dy;
+        if (mc.options.smoothCamera) {
+            double scaled = cubed * 8.0;
+            dx = freelookSmoothX.getNewDeltaValue(accumulatedDX * scaled, movementTime * scaled);
+            dy = freelookSmoothY.getNewDeltaValue(accumulatedDY * scaled, movementTime * scaled);
+        } else {
+            freelookSmoothX.reset();
+            freelookSmoothY.reset();
+            double scaled = mc.player.isScoping() ? cubed : cubed * 8.0;
+            dx = accumulatedDX * scaled;
+            dy = accumulatedDY * scaled;
+        }
         double invert = mc.options.invertYMouse().get() ? -1.0 : 1.0;
 
         float yawLimit = ClientConfig.freelookYawLimit();
-        freelookYaw = Mth.clamp(freelookYaw + (float) (accumulatedDX * scale), -yawLimit, yawLimit);
+        freelookYaw = Mth.clamp(freelookYaw + (float) (dx * 0.15), -yawLimit, yawLimit);
         // Clamp so the *final* pitch stays within vanilla's straight-up/down limits.
         float basePitch = mc.player.getXRot();
-        freelookPitch = Mth.clamp(freelookPitch + (float) (accumulatedDY * scale * invert),
+        freelookPitch = Mth.clamp(freelookPitch + (float) (dy * 0.15 * invert),
                 -90.0f - basePitch, 90.0f - basePitch);
         return true;
     }

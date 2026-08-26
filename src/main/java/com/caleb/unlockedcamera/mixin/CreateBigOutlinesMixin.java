@@ -28,7 +28,7 @@ public abstract class CreateBigOutlinesMixin {
             method = "pick",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;getEyePosition(F)Lnet/minecraft/world/phys/Vec3;"))
     private static Vec3 unlockedcamera$bigOutlineOrigin(LocalPlayer player, float partialTick, Operation<Vec3> original) {
-        Vec3 overridden = UnlockedCameraClient.crosshairRayOrigin();
+        Vec3 overridden = UnlockedCameraClient.crosshairRayOrigin(player);
         return overridden != null ? overridden : original.call(player, partialTick);
     }
 
@@ -36,6 +36,6 @@ public abstract class CreateBigOutlinesMixin {
             method = "pick",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;getAttributeValue(Lnet/minecraft/core/Holder;)D"))
     private static double unlockedcamera$bigOutlineRange(LocalPlayer player, Holder<?> attribute, Operation<Double> original) {
-        return original.call(player, attribute) + UnlockedCameraClient.crosshairRaySetback();
+        return original.call(player, attribute) + UnlockedCameraClient.crosshairRaySetback(player);
     }
 }

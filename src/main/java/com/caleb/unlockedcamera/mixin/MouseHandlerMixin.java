@@ -22,7 +22,7 @@ public abstract class MouseHandlerMixin {
      */
     @Inject(method = "turnPlayer", at = @At("HEAD"), cancellable = true)
     private void unlockedcamera$freelook(double movementTime, CallbackInfo ci) {
-        if (UnlockedCameraClient.freelookMouseTurn(this.accumulatedDX, this.accumulatedDY)) {
+        if (UnlockedCameraClient.freelookMouseTurn(this.accumulatedDX, this.accumulatedDY, movementTime)) {
             ci.cancel();
         }
     }

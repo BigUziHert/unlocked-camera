@@ -27,7 +27,7 @@ public abstract class SimulatedSteeringWheelMixin {
             method = LOOKING_AT_WHEEL,
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getEyePosition(F)Lnet/minecraft/world/phys/Vec3;"))
     private static Vec3 unlockedcamera$wheelRayOrigin(Player player, float partialTick, Operation<Vec3> original) {
-        Vec3 overridden = UnlockedCameraClient.crosshairRayOrigin();
+        Vec3 overridden = UnlockedCameraClient.crosshairRayOrigin(player);
         return overridden != null ? overridden : original.call(player, partialTick);
     }
 
@@ -35,7 +35,7 @@ public abstract class SimulatedSteeringWheelMixin {
             method = LOOKING_AT_WHEEL,
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getViewVector(F)Lnet/minecraft/world/phys/Vec3;"))
     private static Vec3 unlockedcamera$wheelRayDirection(Player player, float partialTick, Operation<Vec3> original) {
-        Vec3 overridden = UnlockedCameraClient.crosshairRayDirection();
+        Vec3 overridden = UnlockedCameraClient.crosshairRayDirection(player);
         return overridden != null ? overridden : original.call(player, partialTick);
     }
 
@@ -43,6 +43,6 @@ public abstract class SimulatedSteeringWheelMixin {
             method = LOOKING_AT_WHEEL,
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;blockInteractionRange()D"))
     private static double unlockedcamera$wheelRayRange(Player player, Operation<Double> original) {
-        return original.call(player) + UnlockedCameraClient.crosshairRaySetback();
+        return original.call(player) + UnlockedCameraClient.crosshairRaySetback(player);
     }
 }

@@ -21,7 +21,7 @@ public abstract class SimulatedHoneyGlueMixin {
             method = {"getHitResult", "updateHovered"},
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getEyePosition()Lnet/minecraft/world/phys/Vec3;"))
     private Vec3 unlockedcamera$glueRayOrigin(Player player, Operation<Vec3> original) {
-        Vec3 overridden = UnlockedCameraClient.crosshairRayOrigin();
+        Vec3 overridden = UnlockedCameraClient.crosshairRayOrigin(player);
         return overridden != null ? overridden : original.call(player);
     }
 
@@ -29,7 +29,7 @@ public abstract class SimulatedHoneyGlueMixin {
             method = "getHitResult",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getViewVector(F)Lnet/minecraft/world/phys/Vec3;"))
     private Vec3 unlockedcamera$glueRayDirection(Player player, float partialTick, Operation<Vec3> original) {
-        Vec3 overridden = UnlockedCameraClient.crosshairRayDirection();
+        Vec3 overridden = UnlockedCameraClient.crosshairRayDirection(player);
         return overridden != null ? overridden : original.call(player, partialTick);
     }
 }
