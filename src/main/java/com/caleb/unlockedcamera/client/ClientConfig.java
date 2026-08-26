@@ -37,21 +37,21 @@ public final class ClientConfig {
             .comment("Offset the camera over the shoulder when zoomed in close; press the swap-shoulder key to switch sides.")
             .define("enableShoulderOffset", true);
 
-    public static final ModConfigSpec.DoubleValue SHOULDER_OFFSET_MAX_ZOOM = BUILDER
-            .comment("Apply the shoulder offset when the camera is at or closer than this distance, in blocks.")
-            .defineInRange("shoulderOffsetMaxZoom", 4.0, 1.0, 64.0);
-
-    public static final ModConfigSpec.DoubleValue SHOULDER_OFFSET_AMOUNT = BUILDER
-            .comment("How far the camera slides over the shoulder, in blocks.")
-            .defineInRange("shoulderOffsetAmount", 0.75, 0.5, 1.0);
+    public static final ModConfigSpec.DoubleValue MAX_ZOOM = BUILDER
+            .comment("Farthest the unlocked camera can zoom out, in blocks.")
+            .defineInRange("maxZoom", 12.0, 4.0, 64.0);
 
     public static final ModConfigSpec.DoubleValue MIN_ZOOM = BUILDER
             .comment("Closest the unlocked camera can zoom in, in blocks.")
             .defineInRange("minZoom", 1.0, 0.5, 32.0);
 
-    public static final ModConfigSpec.DoubleValue MAX_ZOOM = BUILDER
-            .comment("Farthest the unlocked camera can zoom out, in blocks.")
-            .defineInRange("maxZoom", 12.0, 4.0, 64.0);
+    public static final ModConfigSpec.DoubleValue SHOULDER_OFFSET_AMOUNT = BUILDER
+            .comment("How far the camera slides over the shoulder, in blocks.")
+            .defineInRange("shoulderOffsetAmount", 0.75, 0.5, 1.0);
+
+    public static final ModConfigSpec.DoubleValue SHOULDER_OFFSET_MAX_ZOOM = BUILDER
+            .comment("Apply the shoulder offset when the camera is at or closer than this distance, in blocks.")
+            .defineInRange("shoulderOffsetMaxZoom", 4.0, 1.0, 64.0);
 
     public static final ModConfigSpec.DoubleValue FREELOOK_YAW_LIMIT = BUILDER
             .comment("How far left/right freelook can swing, in degrees.")
