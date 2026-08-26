@@ -1,6 +1,7 @@
 package com.caleb.unlockedcamera.client;
 
 import com.mojang.serialization.Codec;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -23,8 +24,27 @@ import net.minecraft.util.Mth;
  */
 public record LinkedSliderRange(OptionInstance.IntRange delegate,
         IntSupplier ownValue, IntSupplier liveMin, IntSupplier liveMax,
-        IntConsumer onDragValue, IntFunction<Component> display)
+        List<Linked> linked, IntConsumer onDragValue, Commit commit,
+        IntFunction<Component> display)
         implements OptionInstance.SliderableValueSet<Integer> {
+
+    /**
+     * A setting this slider's drags can push along: its live value in slider
+     * units, and its setter in config units (used by {@link Commit} to journal
+     * the push into the undo history).
+     */
+    public record Linked(IntSupplier value, Consumer<Double> set) {}
+
+    /**
+     * Journals a finished gesture into the config screen's undo history: the
+     * dragged slider's change plus every linked setting the gesture pushed —
+     * as one composite step, so a single Undo reverts the whole gesture.
+     * {@code linkedStarts[i]} is null when linked setting i was not pushed.
+     */
+    @FunctionalInterface
+    public interface Commit {
+        void commit(int oldOwn, int newOwn, Integer[] linkedStarts, int[] linkedNow);
+    }
 
     @Override
     public Optional<Integer> validateValue(Integer value) {

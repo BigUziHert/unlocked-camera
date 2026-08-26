@@ -1,5 +1,6 @@
 package com.caleb.unlockedcamera.client;
 
+import java.util.List;
 import java.util.function.Consumer;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
@@ -8,18 +9,22 @@ import net.minecraft.client.gui.components.AbstractOptionSliderButton;
 import net.minecraft.util.Mth;
 
 /**
- * The slider behind {@link LinkedSliderRange}. While dragged past the sibling's
- * value it pushes the sibling's config value along in real time; while idle it
+ * The slider behind {@link LinkedSliderRange}. While dragged past a linked
+ * setting's value it pushes that setting along in real time; while idle it
  * re-syncs its knob from the config each frame, so being pushed is visible
  * live. A drag applies once on release — applying on a delay like vanilla
  * loses the value when the screen closes first, since the screen's flush only
- * knows vanilla's widget class.
+ * knows vanilla's widget class. Each gesture is journaled through
+ * {@link LinkedSliderRange.Commit} as one undo step covering the dragged value
+ * and every linked setting the gesture pushed.
  */
 final class LinkedOptionSlider extends AbstractOptionSliderButton {
     private final OptionInstance<Integer> instance;
     private final LinkedSliderRange range;
     private final OptionInstance.TooltipSupplier<Integer> tooltipSupplier;
     private final Consumer<Integer> onValueChanged;
+    /** Per linked setting: its value when this gesture first pushed it; null = untouched. */
+    private Integer[] linkedStarts;
     private boolean dragging;
 
     LinkedOptionSlider(Options options, int x, int y, int width, int height,
@@ -30,6 +35,7 @@ final class LinkedOptionSlider extends AbstractOptionSliderButton {
         this.range = range;
         this.tooltipSupplier = tooltipSupplier;
         this.onValueChanged = onValueChanged;
+        this.linkedStarts = new Integer[range.linked().size()];
         updateMessage();
     }
 
@@ -50,7 +56,17 @@ final class LinkedOptionSlider extends AbstractOptionSliderButton {
     @Override
     protected void applyValue() {
         pinKnob();
+        List<LinkedSliderRange.Linked> links = range.linked();
+        int[] before = new int[links.size()];
+        for (int i = 0; i < links.size(); i++) {
+            before[i] = links.get(i).value().getAsInt();
+        }
         range.onDragValue().accept(range.fromSliderValue(this.value));
+        for (int i = 0; i < links.size(); i++) {
+            if (linkedStarts[i] == null && links.get(i).value().getAsInt() != before[i]) {
+                linkedStarts[i] = before[i];
+            }
+        }
         if (!dragging) {
             applyNow();
         }
@@ -58,11 +74,27 @@ final class LinkedOptionSlider extends AbstractOptionSliderButton {
 
     private void applyNow() {
         Integer newValue = range.fromSliderValue(this.value);
-        if (!newValue.equals(instance.get())) {
-            instance.set(newValue);
-            options.save();
-            onValueChanged.accept(instance.get());
+        List<LinkedSliderRange.Linked> links = range.linked();
+        Integer[] starts = linkedStarts;
+        linkedStarts = new Integer[links.size()];
+        int[] nows = new int[links.size()];
+        boolean linkedChanged = false;
+        for (int i = 0; i < links.size(); i++) {
+            nows[i] = links.get(i).value().getAsInt();
+            if (starts[i] != null && starts[i] != nows[i]) {
+                linkedChanged = true;
+            } else {
+                starts[i] = null;
+            }
         }
+        if (newValue.equals(instance.get()) && !linkedChanged) {
+            return;
+        }
+        int oldOwn = instance.get();
+        instance.set(newValue);
+        options.save();
+        onValueChanged.accept(instance.get());
+        range.commit().commit(oldOwn, newValue, starts, nows);
     }
 
     @Override
@@ -81,7 +113,7 @@ final class LinkedOptionSlider extends AbstractOptionSliderButton {
     @Override
     public void renderWidget(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.renderWidget(guiGraphics, mouseX, mouseY, partialTick);
-        // Follow pushes from the sibling while idle.
+        // Follow pushes from linked sliders while idle.
         if (!dragging) {
             double synced = range.toSliderValue(range.ownValue().getAsInt());
             if (Math.abs(synced - this.value) > 1.0E-6) {

@@ -57,15 +57,10 @@ approval.
   configured zoom (even when min zoom > 4): Caleb prefers the seamless F5
   transition over an instant jump-cut. (Caleb's explicit call, 2026-08-26.)
 
-Known OPEN BUG (not accepted): the projectile aim ray is blocks-only, so a
-shot converges past an entity standing under the crosshair and can miss it
-sideways at close range — crosshairAimAngles needs the entity sweep that
-cameraRayPick already has.
-
-Open questions Caleb has NOT ruled on: whether interaction reach should stay
-feet-based (HitResult#distanceTo — currently kept for Sable sublevel
-correctness) and whether Undo should also rewind a linked zoom slider's push.
-Ask him before changing either.
+All findings from the 2026-08-26 external code review are resolved: the aim
+ray sweeps entities; reach is eye-based for world hits (Sable's sublevel-aware
+HitResult#distanceTo only for plot-space hits); and config-slider gestures
+journal as one composite undo step covering every linked setting they pushed.
 
 ## Process
 
