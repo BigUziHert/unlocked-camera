@@ -253,7 +253,10 @@ public class UnlockedCameraClient {
         // recomputation dropped the game to a slideshow. The extra rotation
         // sends are throttled for the same reason — Sable also does
         // contraption-relative work per movement packet.
-        cachedHeldAim = holdingRangedItem(mc) ? crosshairAimAngles() : null;
+        // During freelook the aim is held with ANY item: the head visibly
+        // tracks the deflected view for other players, and shots land true.
+        cachedHeldAim = (holdingRangedItem(mc) || freelookDeflected(mc))
+                ? crosshairAimAngles() : null;
         heldAimTicks++;
         if (cachedHeldAim != null && mc.getConnection() != null
                 && heldAimTicks - lastAimSendTick >= 2
@@ -304,6 +307,24 @@ public class UnlockedCameraClient {
                 && ClientConfig.shoulderOffsetMaxZoom() + 1.0f - targetDistance > 0.0f;
     }
 
+    /** First-person freelook is deflecting the view away from the body. */
+    private static boolean freelookDeflected(Minecraft mc) {
+        return (Math.abs(freelookYaw) > 0.5f || Math.abs(freelookPitch) > 0.5f)
+                && mc.options.getCameraType().isFirstPerson();
+    }
+
+    /**
+     * The centered crosshair defines aim independently of the body: the
+     * shoulder camera is engaged, or first-person freelook is deflecting the
+     * view. Targeting, other mods' raycasts, and projectile correction all
+     * follow the camera in both states — in first person the camera sits at
+     * the eye, so the shoulder machinery reduces to plain forward rays.
+     */
+    private static boolean crosshairAimActive() {
+        Minecraft mc = Minecraft.getInstance();
+        return shoulderEngaged() || (mc.player != null && freelookDeflected(mc));
+    }
+
     /**
      * Projectiles fly along the PLAYER's rotation. The packet layer corrects
      * the shot itself at any distance (see ClientPacketListenerMixin); this
@@ -344,7 +365,7 @@ public class UnlockedCameraClient {
      */
     public static float[] crosshairAimAngles() {
         Minecraft mc = Minecraft.getInstance();
-        if (!shoulderEngaged() || mc.level == null || mc.player == null) {
+        if (!crosshairAimActive() || mc.level == null || mc.player == null) {
             return null;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
@@ -353,6 +374,17 @@ public class UnlockedCameraClient {
         }
 
         Vector3f forward = camera.getLookVector();
+        if (!shoulderEngaged()) {
+            // First-person freelook: the camera sits at the eye, so the exact
+            // aim is simply the view direction — no parallax, no raycast.
+            double flHorizontal = Math.sqrt(forward.x() * forward.x() + forward.z() * forward.z());
+            float flRawYaw = (float) Math.toDegrees(Mth.atan2(forward.z(), forward.x())) - 90.0f;
+            float flCurrentYaw = mc.player.getYRot();
+            return new float[] {
+                    flCurrentYaw + Mth.wrapDegrees(flRawYaw - flCurrentYaw),
+                    Mth.clamp((float) -Math.toDegrees(Mth.atan2(forward.y(), Math.max(flHorizontal, 1.0E-4))),
+                            -90.0f, 90.0f)};
+        }
         Vec3 direction = new Vec3(forward.x(), forward.y(), forward.z());
         Vec3 origin = camera.getPosition();
         Vec3 eye = mc.player.getEyePosition();
@@ -610,7 +642,7 @@ public class UnlockedCameraClient {
      * (mirroring vanilla's filterHitResult) so the server never rejects the action.
      */
     public static HitResult cameraRayPick(Entity entity, double blockInteractionRange, double entityInteractionRange, float partialTick) {
-        if (!shoulderEngaged()) {
+        if (!crosshairAimActive()) {
             return null;
         }
         Minecraft mc = Minecraft.getInstance();
@@ -662,7 +694,7 @@ public class UnlockedCameraClient {
      */
     public static Vec3 createTraceTarget(net.minecraft.world.entity.player.Player player, double range, Vec3 origin) {
         Minecraft mc = Minecraft.getInstance();
-        if (!shoulderEngaged() || player != mc.player || mc.hitResult == null) {
+        if (!crosshairAimActive() || player != mc.player || mc.hitResult == null) {
             return null;
         }
         Vec3 aim = mc.hitResult.getLocation().subtract(origin);
@@ -681,7 +713,7 @@ public class UnlockedCameraClient {
      */
     public static Vec3 contraptionRayOrigin(net.minecraft.client.player.LocalPlayer player) {
         Minecraft mc = Minecraft.getInstance();
-        if (!shoulderEngaged() || player != mc.player) {
+        if (!crosshairAimActive() || player != mc.player) {
             return null;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
@@ -695,7 +727,7 @@ public class UnlockedCameraClient {
      */
     public static Vec3 contraptionRayTarget(net.minecraft.world.entity.player.Player player, double range, Vec3 origin) {
         Minecraft mc = Minecraft.getInstance();
-        if (!shoulderEngaged() || player != mc.player) {
+        if (!crosshairAimActive() || player != mc.player) {
             return null;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
@@ -715,7 +747,7 @@ public class UnlockedCameraClient {
      */
     public static Vec3 crosshairRayOrigin() {
         Minecraft mc = Minecraft.getInstance();
-        if (!shoulderEngaged() || mc.player == null) {
+        if (!crosshairAimActive() || mc.player == null) {
             return null;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
@@ -734,7 +766,7 @@ public class UnlockedCameraClient {
      */
     public static Vec3 crosshairOffsetFromEye(double distance) {
         Minecraft mc = Minecraft.getInstance();
-        if (!shoulderEngaged() || mc.player == null) {
+        if (!crosshairAimActive() || mc.player == null) {
             return null;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
@@ -767,7 +799,7 @@ public class UnlockedCameraClient {
      */
     public static HitResult crosshairPick(Entity entity, double hitDistance, float partialTick, boolean hitFluids) {
         Minecraft mc = Minecraft.getInstance();
-        if (!shoulderEngaged() || mc.level == null) {
+        if (!crosshairAimActive() || mc.level == null) {
             return null;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
@@ -789,7 +821,7 @@ public class UnlockedCameraClient {
      */
     public static double crosshairRaySetback() {
         Minecraft mc = Minecraft.getInstance();
-        if (!shoulderEngaged() || mc.player == null) {
+        if (!crosshairAimActive() || mc.player == null) {
             return 0.0;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
@@ -799,7 +831,7 @@ public class UnlockedCameraClient {
     /** Direction of the crosshair ray, or null while the shoulder offset is disengaged. */
     public static Vec3 crosshairRayDirection() {
         Minecraft mc = Minecraft.getInstance();
-        if (!shoulderEngaged() || mc.player == null) {
+        if (!crosshairAimActive() || mc.player == null) {
             return null;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
