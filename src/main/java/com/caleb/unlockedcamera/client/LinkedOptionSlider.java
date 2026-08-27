@@ -27,7 +27,7 @@ import org.lwjgl.glfw.GLFW;
  * elsewhere — so the render loop also closes the gesture as soon as the
  * button is no longer down.
  */
-final class LinkedOptionSlider extends AbstractOptionSliderButton {
+public final class LinkedOptionSlider extends AbstractOptionSliderButton {
     private final OptionInstance<Integer> instance;
     private final LinkedSliderRange range;
     private final OptionInstance.TooltipSupplier<Integer> tooltipSupplier;
@@ -148,6 +148,23 @@ final class LinkedOptionSlider extends AbstractOptionSliderButton {
         finishGesture();
     }
 
+    private static LinkedOptionSlider hovered;
+    private static long hoveredNanos;
+
+    /**
+     * Routes an arrow key to the slider under the mouse — hovering is enough,
+     * no click-to-focus needed (focused sliders still work through the normal
+     * path). Called from the configuration screen's keyPressed override.
+     */
+    public static boolean hoverArrowKey(int keyCode, int scanCode, int modifiers) {
+        LinkedOptionSlider target = hovered;
+        return (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT
+                        || keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT)
+                && target != null && target.isHovered()
+                && System.nanoTime() - hoveredNanos < 100_000_000L
+                && target.keyPressed(keyCode, scanCode, modifiers);
+    }
+
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (keyCode == GLFW.GLFW_KEY_LEFT || keyCode == GLFW.GLFW_KEY_RIGHT) {
@@ -169,6 +186,10 @@ final class LinkedOptionSlider extends AbstractOptionSliderButton {
     @Override
     public void renderWidget(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.renderWidget(guiGraphics, mouseX, mouseY, partialTick);
+        if (isHovered()) {
+            hovered = this;
+            hoveredNanos = System.nanoTime();
+        }
         // The release landed off the widget (positional mouseReleased routing
         // never calls onRelease then): close the gesture as soon as the
         // button is up.

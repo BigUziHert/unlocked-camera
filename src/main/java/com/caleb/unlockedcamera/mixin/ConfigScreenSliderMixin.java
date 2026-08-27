@@ -3,9 +3,13 @@ package com.caleb.unlockedcamera.mixin;
 import com.caleb.unlockedcamera.UnlockedCameraMod;
 import com.caleb.unlockedcamera.client.LinkedSliderRange;
 import com.caleb.unlockedcamera.client.ClientConfig;
+import com.caleb.unlockedcamera.client.LinkedOptionSlider;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import net.minecraft.client.OptionInstance;
+import net.minecraft.client.Options;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.options.OptionsSubScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.neoforged.neoforge.client.gui.ConfigurationScreen;
@@ -25,7 +29,23 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * on the option's translation key, so other mods' screens are untouched.
  */
 @Mixin(ConfigurationScreen.ConfigurationSectionScreen.class)
-public abstract class ConfigScreenSliderMixin {
+public abstract class ConfigScreenSliderMixin extends OptionsSubScreen {
+    protected ConfigScreenSliderMixin(Screen lastScreen, Options options, net.minecraft.network.chat.Component title) {
+        super(lastScreen, options, title);
+    }
+
+    /**
+     * Arrow keys adjust the slider under the mouse, no click-to-focus needed;
+     * a focused slider still works through the normal path below.
+     */
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (LinkedOptionSlider.hoverArrowKey(keyCode, scanCode, modifiers)) {
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
     @Shadow(remap = false)
     @Final
     protected ConfigurationScreen.UndoManager undoManager;
@@ -117,7 +137,13 @@ public abstract class ConfigScreenSliderMixin {
                         minScaled, maxScaled, links, v -> {},
                         unlockedcamera$gestureCommit(key, target, links, step), display);
             }
-            default -> intRange;
+            // Unlinked sliders use the same widget too, so arrow stepping,
+            // hover-targeted arrows, and apply-on-release behave uniformly.
+            default -> new LinkedSliderRange(intRange,
+                    () -> (int) Math.round(source.get() / step),
+                    () -> scaledMin, () -> scaledMax,
+                    java.util.List.of(), v -> {},
+                    unlockedcamera$gestureCommit(key, target, java.util.List.of(), step), display);
         };
         boolean linkedJournal = valueSet instanceof LinkedSliderRange;
         cir.setReturnValue(new ConfigurationScreen.ConfigurationSectionScreen.Element(

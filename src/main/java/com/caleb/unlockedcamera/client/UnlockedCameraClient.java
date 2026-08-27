@@ -59,7 +59,7 @@ public class UnlockedCameraClient {
     private static final float FREELOOK_RETURN_SPEED = 12.0f;
     /** The gentler recenter rate while the cinematic camera smooths everything
      * else — the normal snap reads as a jolt against its heavy easing. */
-    private static final float CINEMATIC_FREELOOK_RETURN_SPEED = 3.0f;
+    private static final float CINEMATIC_FREELOOK_RETURN_SPEED = 2.0f;
     /** How fast the camera slides between shoulders (per second). */
     private static final float SHOULDER_SPEED = 8.0f;
 
@@ -257,6 +257,10 @@ public class UnlockedCameraClient {
                     lastFrameNanos = 0L;
                     lastCapNanos = 0L;
                     lastShoulderNanos = 0L;
+                    // Resume the way F5 enters: start at vanilla's distance and
+                    // glide out to the pre-seat zoom instead of snapping there.
+                    smoothedDistance = VANILLA_DISTANCE;
+                    collisionCap = VANILLA_DISTANCE;
                 }
                 lastSeatCameraType = null;
             }
