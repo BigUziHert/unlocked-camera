@@ -57,6 +57,9 @@ public class UnlockedCameraClient {
     private static final float COLLISION_RECOVER_SPEED = 8.0f;
     /** How quickly the view recenters after releasing the freelook key (per second). */
     private static final float FREELOOK_RETURN_SPEED = 12.0f;
+    /** The gentler recenter rate while the cinematic camera smooths everything
+     * else — the normal snap reads as a jolt against its heavy easing. */
+    private static final float CINEMATIC_FREELOOK_RETURN_SPEED = 3.0f;
     /** How fast the camera slides between shoulders (per second). */
     private static final float SHOULDER_SPEED = 8.0f;
 
@@ -1068,8 +1071,11 @@ public class UnlockedCameraClient {
                 event.setPitch(mc.player.getXRot());
                 return;
             }
-            // Key released: ease the view back to where the player actually looks.
-            float blend = 1.0f - (float) Math.exp(-deltaSeconds * FREELOOK_RETURN_SPEED);
+            // Key released: ease the view back to where the player actually looks,
+            // gently enough to match the cinematic camera when it is smoothing.
+            float returnSpeed = mc.options.smoothCamera
+                    ? CINEMATIC_FREELOOK_RETURN_SPEED : FREELOOK_RETURN_SPEED;
+            float blend = 1.0f - (float) Math.exp(-deltaSeconds * returnSpeed);
             freelookYaw = Mth.lerp(blend, freelookYaw, 0.0f);
             freelookPitch = Mth.lerp(blend, freelookPitch, 0.0f);
             if (Math.abs(freelookYaw) < 0.05f && Math.abs(freelookPitch) < 0.05f) {

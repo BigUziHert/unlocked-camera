@@ -31,6 +31,13 @@ neoForge {
             client()
         }
 
+        // Second client for LAN multiplayer testing (distinct name + game dir).
+        client2 {
+            client()
+            programArguments.addAll('--username', 'Dev2')
+            gameDirectory = project.file('run2')
+        }
+
         configureEach {
             systemProperty 'forge.logging.markers', 'REGISTRIES'
             logLevel = org.slf4j.event.Level.DEBUG
