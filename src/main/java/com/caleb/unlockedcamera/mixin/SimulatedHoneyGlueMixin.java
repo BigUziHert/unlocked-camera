@@ -3,6 +3,7 @@ package com.caleb.unlockedcamera.mixin;
 import com.caleb.unlockedcamera.client.UnlockedCameraClient;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import net.minecraft.core.Holder;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
@@ -37,5 +38,20 @@ public abstract class SimulatedHoneyGlueMixin {
     private Vec3 unlockedcamera$glueRayDirection(Player player, float partialTick, Operation<Vec3> original) {
         Vec3 overridden = UnlockedCameraClient.crosshairRayDirection(player);
         return overridden != null ? overridden : original.call(player, partialTick);
+    }
+
+    /**
+     * Both rays measure their reach from the interaction-range attribute, but
+     * the wrapped origin sits at the CAMERA — a shoulder-width and a zoom
+     * behind the eye. Without extending the reach by that setback the segment
+     * ends at the player and every clip misses, which killed the hover
+     * outline in third person. Same pattern as the steering wheel's range wrap.
+     */
+    @WrapOperation(
+            method = {"getHitResult", "updateHovered"},
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getAttributeValue(Lnet/minecraft/core/Holder;)D"),
+            require = 0)
+    private double unlockedcamera$glueRayRange(Player player, Holder<?> attribute, Operation<Double> original) {
+        return original.call(player, attribute) + UnlockedCameraClient.crosshairRaySetback(player);
     }
 }
