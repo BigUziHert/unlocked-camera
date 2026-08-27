@@ -123,7 +123,15 @@ public class UnlockedCameraClient {
      */
     static void onInteractionKeyTriggered(InputEvent.InteractionKeyMappingTriggered event) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || !ClientConfig.freelookKeepDirection()) {
+        // Camera-entity guard: clicking while spectating another entity must
+        // not snap the detached player's body to a leftover deflection.
+        if (mc.player == null || !ClientConfig.freelookKeepDirection()
+                || mc.getCameraEntity() != mc.player) {
+            return;
+        }
+        // Pick-block already follows the crosshair; middle-click shouldn't
+        // commit the freelook direction.
+        if (event.isPickBlock()) {
             return;
         }
         if (Math.abs(freelookYaw) < 0.5f && Math.abs(freelookPitch) < 0.5f) {
@@ -172,6 +180,11 @@ public class UnlockedCameraClient {
         if (mc.player == null) {
             active = false;
             resumeAfterSeat = false;
+            // Forget any freelook deflection too: with Keep Freelook Direction
+            // on, a stale offset would snap the body to it on the next join.
+            freelookYaw = 0.0f;
+            freelookPitch = 0.0f;
+            lastFreelookNanos = 0L;
             dropHeldAim();
             return;
         }
@@ -184,8 +197,8 @@ public class UnlockedCameraClient {
             }
         }
 
-        // Unlocked camera disabled in config: leave the perspective key to vanilla.
-        if (!ClientConfig.unlockedCameraEnabled()) {
+        // Master switch off: every feature stands down.
+        if (!ClientConfig.modEnabled()) {
             active = false;
             dropHeldAim();
             return;
@@ -205,41 +218,70 @@ public class UnlockedCameraClient {
             return;
         }
 
-        // Dismounted from a Sable seat. What the seat's view cycle ended on
-        // decides the view now: Sable's own contraption camera exits to a first
-        // person the player never chose, so that (or the vanilla back view)
-        // resumes the unlocked camera at the pre-seat zoom — while first person
-        // or the front view chosen deliberately in the seat is kept. Wait out
-        // any lingering Sable camera type first.
-        if (resumeAfterSeat && isVanillaCameraType(mc.options.getCameraType())) {
-            resumeAfterSeat = false;
-            if (lastSeatCameraType == null || !isVanillaCameraType(lastSeatCameraType)
-                    || lastSeatCameraType == CameraType.THIRD_PERSON_BACK) {
-                active = true;
-                setCameraType(mc, CameraType.THIRD_PERSON_BACK);
-            }
-            lastSeatCameraType = null;
-        }
-
-        // The camera is in a modded camera type we don't know (e.g. Sable's
-        // sub-level views): leave the perspective key alone until it's back to a
-        // vanilla view.
-        if (!isVanillaCameraType(mc.options.getCameraType())) {
+        // Spectator: step aside like the Sable seat. Don't consume the
+        // perspective key (vanilla's own cycle handles spectating) and don't
+        // stay active, so scrolling keeps adjusting fly speed and the
+        // spectator menu instead of being swallowed as zoom.
+        if (mc.player.isSpectator()) {
             active = false;
             dropHeldAim();
             return;
         }
 
-        while (mc.options.keyTogglePerspective.consumeClick()) {
-            cyclePerspective(mc);
-        }
+        if (!ClientConfig.unlockedCameraEnabled()) {
+            // Fourth camera disabled in config: leave the perspective key to
+            // vanilla, but fall through to the aim hold below — freelook works
+            // without the camera, its deflection still drives picking and the
+            // UseItem rewrite, and without the hold a crossbow shot fired
+            // mid-freelook flies along the head rotation, a tick behind.
+            active = false;
+        } else {
+            // Dismounted from a Sable seat. What the seat's view cycle ended on
+            // decides the view now: Sable's own contraption camera exits to a first
+            // person the player never chose, so that (or the vanilla back view)
+            // resumes the unlocked camera at the pre-seat zoom — while first person
+            // or the front view chosen deliberately in the seat is kept. Wait out
+            // any lingering Sable camera type first.
+            if (resumeAfterSeat && isVanillaCameraType(mc.options.getCameraType())) {
+                resumeAfterSeat = false;
+                if (lastSeatCameraType == null || !isVanillaCameraType(lastSeatCameraType)
+                        || lastSeatCameraType == CameraType.THIRD_PERSON_BACK) {
+                    active = true;
+                    setCameraType(mc, CameraType.THIRD_PERSON_BACK);
+                    // The easing timestamps still hold pre-seat times; reset them
+                    // so the first frame back doesn't blend across the whole seat
+                    // and resume behaves the same after any seat duration.
+                    lastFrameNanos = 0L;
+                    lastCapNanos = 0L;
+                    lastShoulderNanos = 0L;
+                }
+                lastSeatCameraType = null;
+            }
 
-        // Vanilla third person shouldn't be reachable while it's disabled. If
-        // the option was turned on while already standing in it, step into the
-        // unlocked camera immediately instead of waiting for an F5 press.
-        if (!active && ClientConfig.disableVanillaThirdPerson()
-                && mc.options.getCameraType() == CameraType.THIRD_PERSON_BACK) {
-            enterCamera(mc);
+            // The camera is in a modded camera type we don't know (e.g. Sable's
+            // sub-level views): leave the perspective key alone until it's back to a
+            // vanilla view.
+            if (!isVanillaCameraType(mc.options.getCameraType())) {
+                active = false;
+                dropHeldAim();
+                return;
+            }
+
+            while (mc.options.keyTogglePerspective.consumeClick()) {
+                cyclePerspective(mc);
+            }
+
+            // Vanilla third person shouldn't be reachable while it's disabled. If
+            // the option was turned on while already standing in it, step into the
+            // unlocked camera immediately instead of waiting for an F5 press.
+            if (!active && ClientConfig.disableVanillaThirdPerson()
+                    && mc.options.getCameraType() == CameraType.THIRD_PERSON_BACK) {
+                enterCamera(mc);
+            }
+
+            // Live edits to the zoom sliders take effect right away, not on the
+            // next scroll.
+            targetDistance = Mth.clamp(targetDistance, ClientConfig.minZoom(), ClientConfig.maxZoom());
         }
 
         // Keep the server's rotation glued to the crosshair while a ranged or
@@ -256,17 +298,32 @@ public class UnlockedCameraClient {
         // contraption-relative work per movement packet.
         // During freelook the aim is held with ANY item: the head visibly
         // tracks the deflected view for other players, and shots land true.
-        cachedHeldAim = (holdingRangedItem(mc) || freelookDeflected(mc))
+        float[] freshAim = (holdingRangedItem(mc) || freelookDeflected(mc))
                 ? crosshairAimAngles() : null;
+        boolean hadAim = cachedHeldAim != null;
+        cachedHeldAim = freshAim;
         heldAimTicks++;
-        if (cachedHeldAim != null && mc.getConnection() != null
+        if (freshAim == null) {
+            if (hadAim) {
+                // The hold just ended (item put away, freelook released — or
+                // zeroed outright by an F5 mid-freelook). The server still has
+                // the stamped aim and vanilla won't send rotation until the
+                // body next turns, so tell it the true rotation once. Clear
+                // the cache FIRST so this packet passes the rewrite untouched.
+                dropHeldAim();
+                if (mc.getConnection() != null) {
+                    mc.getConnection().send(new ServerboundMovePlayerPacket.Rot(
+                            mc.player.getYRot(), mc.player.getXRot(), mc.player.onGround()));
+                }
+            }
+        } else if (mc.getConnection() != null
                 && heldAimTicks - lastAimSendTick >= 2
                 && (lastSentAim == null
-                        || Math.abs(Mth.wrapDegrees(cachedHeldAim[0] - lastSentAim[0])) > 0.25f
-                        || Math.abs(cachedHeldAim[1] - lastSentAim[1]) > 0.25f)) {
+                        || Math.abs(Mth.wrapDegrees(freshAim[0] - lastSentAim[0])) > 0.25f
+                        || Math.abs(freshAim[1] - lastSentAim[1]) > 0.25f)) {
             mc.getConnection().send(new ServerboundMovePlayerPacket.Rot(
-                    cachedHeldAim[0], cachedHeldAim[1], mc.player.onGround()));
-            lastSentAim = cachedHeldAim;
+                    freshAim[0], freshAim[1], mc.player.onGround()));
+            lastSentAim = freshAim;
             lastAimSendTick = heldAimTicks;
         }
 
@@ -499,6 +556,8 @@ public class UnlockedCameraClient {
             UseAnim anim = stack.getUseAnimation();
             if (anim == UseAnim.BOW || anim == UseAnim.CROSSBOW || anim == UseAnim.SPEAR
                     || stack.getItem() instanceof ProjectileItem
+                    // EnderpearlItem does NOT implement ProjectileItem in
+                    // 1.21.1 — this clause alone enables the hold for pearls.
                     || stack.getItem() instanceof EnderpearlItem) {
                 return true;
             }
@@ -548,12 +607,17 @@ public class UnlockedCameraClient {
 
     static void onMouseScroll(InputEvent.MouseScrollingEvent event) {
         Minecraft mc = Minecraft.getInstance();
-        if (!active || mc.screen != null || mc.player == null) {
+        // The spectator check covers the frames between a gamemode switch and
+        // the next tick (which drops active): spectator fly-speed and menu
+        // scrolling both run after this event, and must not be swallowed.
+        if (!active || mc.screen != null || mc.player == null || mc.player.isSpectator()) {
             return;
         }
 
         // Only vertical scroll zooms (and only vertical scroll cycles the
-        // hotbar) — leave horizontal-only scroll events for other mods.
+        // hotbar) — horizontal-only scroll events are left for other mods.
+        // Cancelling a mixed event does swallow its horizontal delta too;
+        // the event has no per-axis consume.
         double notches = event.getScrollDeltaY();
         if (notches != 0) {
             // Scroll up zooms in, scroll down zooms out.
@@ -603,8 +667,10 @@ public class UnlockedCameraClient {
     /**
      * Called from {@link com.caleb.unlockedcamera.mixin.GuiMixin}: whether the
      * vanilla CENTER crosshair should draw even though the camera isn't first
-     * person. It stays truthful because picking runs along the camera ray while
-     * the shoulder offset is engaged (see cameraRayPick).
+     * person. While the shoulder offset is engaged it stays truthful, because
+     * picking runs along the camera ray (see cameraRayPick); with
+     * crosshairAlways, beyond the shoulder gate it merely draws — picking and
+     * aim follow the body's facing there.
      */
     public static boolean shouldForceCrosshair() {
         return active && (ClientConfig.crosshairAlways()
@@ -910,6 +976,10 @@ public class UnlockedCameraClient {
                 && FREELOOK_KEY.isDown()
                 && mc.player != null
                 && mc.screen == null
+                // While spectating another entity the view shows that entity's
+                // rotation; deflecting relative to the detached player's would
+                // wrench the camera somewhere unrelated.
+                && mc.getCameraEntity() == mc.player
                 && mc.options.getCameraType() == CameraType.FIRST_PERSON;
     }
 
@@ -963,7 +1033,13 @@ public class UnlockedCameraClient {
 
     static void onComputeCameraAngles(ViewportEvent.ComputeCameraAngles event) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.options.getCameraType() != CameraType.FIRST_PERSON) {
+        // The camera-entity check matters while spectating another entity:
+        // that keeps the camera type FIRST_PERSON, and easing or snapping a
+        // leftover deflection there would wrench the view (or the detached
+        // player's body) around rotations that aren't on screen. Zero the
+        // offset and leave the event angles alone.
+        if (mc.player == null || mc.options.getCameraType() != CameraType.FIRST_PERSON
+                || mc.getCameraEntity() != mc.player) {
             freelookYaw = 0.0f;
             freelookPitch = 0.0f;
             return;
@@ -1062,7 +1138,12 @@ public class UnlockedCameraClient {
             Vec3 direction = new Vec3(-left.x(), -left.y(), -left.z()).scale(sign);
             Vec3 to = from.add(direction.scale(rawClearance + 0.1));
             HitResult hit = mc.level.clip(new ClipContext(from, to, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, mc.player));
-            if (hit.getType() != HitResult.Type.MISS) {
+            // Sable sublevel hits come back in far-away plot space with no
+            // usable location along this sideways ray — treat them as a miss
+            // (keep the default clearance) rather than reading the plot-space
+            // location as a huge clearance.
+            if (hit.getType() != HitResult.Type.MISS
+                    && hit.getLocation().distanceToSqr(from) <= Mth.square(rawClearance + 0.1 + 2.0)) {
                 rawClearance = (float) Math.max(0.0, hit.getLocation().distanceTo(from) - 0.1);
             }
         }
@@ -1103,6 +1184,13 @@ public class UnlockedCameraClient {
         // Vanilla's 8-point raycast (one from each corner of a small box around the
         // focus point).
         float limit = desired;
+        // Sable sublevel hits report plot-space locations thousands of blocks
+        // away, which would never pull the camera in — a hull between camera
+        // and player wouldn't constrain it. Their true world distance survives
+        // only in the sublevel-aware HitResult#distanceTo (squared, from the
+        // entity's feet) — close enough for a collision cap whose rays are
+        // already jittered by 0.1.
+        double maxHitSqr = Mth.square(desired + 2.0);
         for (int i = 0; i < 8; i++) {
             float ox = ((i & 1) * 2 - 1) * 0.1f;
             float oy = ((i >> 1 & 1) * 2 - 1) * 0.1f;
@@ -1114,7 +1202,9 @@ public class UnlockedCameraClient {
                     position.z - forwards.z() * desired + oz);
             HitResult hit = level.clip(new ClipContext(from, to, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, entity));
             if (hit.getType() != HitResult.Type.MISS) {
-                float d = (float) hit.getLocation().distanceTo(position);
+                float d = hit.getLocation().distanceToSqr(position) <= maxHitSqr
+                        ? (float) hit.getLocation().distanceTo(position)
+                        : (float) Math.sqrt(hit.distanceTo(entity));
                 if (d < limit) {
                     limit = d;
                 }

@@ -1,11 +1,7 @@
 plugins {
-    id 'java-library'
+    id 'java'
     id 'net.neoforged.moddev' version '2.0.141'
     id 'idea'
-}
-
-tasks.named('wrapper', Wrapper).configure {
-    distributionType = Wrapper.DistributionType.BIN
 }
 
 version = mod_version

@@ -81,8 +81,8 @@ public abstract class ConfigScreenSliderMixin {
         OptionInstance.ValueSet<Integer> valueSet = switch (key) {
             case "minZoom" -> {
                 java.util.List<LinkedSliderRange.Linked> links = java.util.List.of(
-                        new LinkedSliderRange.Linked(maxScaled, ClientConfig.MAX_ZOOM::set),
-                        new LinkedSliderRange.Linked(thresholdScaled, ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::set));
+                        new LinkedSliderRange.Linked("maxZoom", maxScaled, ClientConfig.MAX_ZOOM::set),
+                        new LinkedSliderRange.Linked("shoulderOffsetMaxZoom", thresholdScaled, ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::set));
                 yield new LinkedSliderRange(intRange, minScaled,
                         () -> scaledMin, () -> scaledMax, links,
                         v -> {
@@ -97,8 +97,8 @@ public abstract class ConfigScreenSliderMixin {
             }
             case "maxZoom" -> {
                 java.util.List<LinkedSliderRange.Linked> links = java.util.List.of(
-                        new LinkedSliderRange.Linked(minScaled, ClientConfig.MIN_ZOOM::set),
-                        new LinkedSliderRange.Linked(thresholdScaled, ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::set));
+                        new LinkedSliderRange.Linked("minZoom", minScaled, ClientConfig.MIN_ZOOM::set),
+                        new LinkedSliderRange.Linked("shoulderOffsetMaxZoom", thresholdScaled, ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::set));
                 yield new LinkedSliderRange(intRange, maxScaled,
                         () -> scaledMin, () -> scaledMax, links,
                         v -> {
@@ -164,12 +164,13 @@ public abstract class ConfigScreenSliderMixin {
             for (int i = 0; i < links.size(); i++) {
                 if (linkedStarts[i] != null) {
                     java.util.function.Consumer<Double> set = links.get(i).set();
+                    String linkedKey = links.get(i).key();
                     steps.add(undoManager.step((Double v) -> {
                         set.accept(v);
-                        onChanged(key);
+                        onChanged(linkedKey);
                     }, linkedNow[i] * step, (Double v) -> {
                         set.accept(v);
-                        onChanged(key);
+                        onChanged(linkedKey);
                     }, linkedStarts[i] * step));
                 }
             }

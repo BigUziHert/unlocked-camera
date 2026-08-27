@@ -17,6 +17,10 @@ import org.spongepowered.asm.mixin.injection.At;
  * crosshair, extending its length by the camera setback to preserve reach.
  *
  * <p>Applied only when Simulated is installed (see UnlockedCameraMixinPlugin).
+ *
+ * <p>Enhancement-only, so require = 0: if a Simulated update moves these call
+ * sites, the game launches with the compat disabled and a logged warning (see
+ * UnlockedCameraMixinPlugin#postApply) instead of crashing.
  */
 @Mixin(targets = "dev.simulated_team.simulated.content.blocks.steering_wheel.SteeringWheelBlock", remap = false)
 public abstract class SimulatedSteeringWheelMixin {
@@ -25,7 +29,8 @@ public abstract class SimulatedSteeringWheelMixin {
 
     @WrapOperation(
             method = LOOKING_AT_WHEEL,
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getEyePosition(F)Lnet/minecraft/world/phys/Vec3;"))
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getEyePosition(F)Lnet/minecraft/world/phys/Vec3;"),
+            require = 0)
     private static Vec3 unlockedcamera$wheelRayOrigin(Player player, float partialTick, Operation<Vec3> original) {
         Vec3 overridden = UnlockedCameraClient.crosshairRayOrigin(player);
         return overridden != null ? overridden : original.call(player, partialTick);
@@ -33,7 +38,8 @@ public abstract class SimulatedSteeringWheelMixin {
 
     @WrapOperation(
             method = LOOKING_AT_WHEEL,
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getViewVector(F)Lnet/minecraft/world/phys/Vec3;"))
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getViewVector(F)Lnet/minecraft/world/phys/Vec3;"),
+            require = 0)
     private static Vec3 unlockedcamera$wheelRayDirection(Player player, float partialTick, Operation<Vec3> original) {
         Vec3 overridden = UnlockedCameraClient.crosshairRayDirection(player);
         return overridden != null ? overridden : original.call(player, partialTick);
@@ -41,7 +47,8 @@ public abstract class SimulatedSteeringWheelMixin {
 
     @WrapOperation(
             method = LOOKING_AT_WHEEL,
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;blockInteractionRange()D"))
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;blockInteractionRange()D"),
+            require = 0)
     private static double unlockedcamera$wheelRayRange(Player player, Operation<Double> original) {
         return original.call(player) + UnlockedCameraClient.crosshairRaySetback(player);
     }

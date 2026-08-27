@@ -14,12 +14,17 @@ import org.spongepowered.asm.mixin.injection.At;
  * the crosshair. Point both down the crosshair ray instead.
  *
  * <p>Applied only when Simulated is installed (see UnlockedCameraMixinPlugin).
+ *
+ * <p>Enhancement-only, so require = 0: if a Simulated update moves these call
+ * sites, the game launches with the compat disabled and a logged warning (see
+ * UnlockedCameraMixinPlugin#postApply) instead of crashing.
  */
 @Mixin(targets = "dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueClientHandler", remap = false)
 public abstract class SimulatedHoneyGlueMixin {
     @WrapOperation(
             method = {"getHitResult", "updateHovered"},
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getEyePosition()Lnet/minecraft/world/phys/Vec3;"))
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getEyePosition()Lnet/minecraft/world/phys/Vec3;"),
+            require = 0)
     private Vec3 unlockedcamera$glueRayOrigin(Player player, Operation<Vec3> original) {
         Vec3 overridden = UnlockedCameraClient.crosshairRayOrigin(player);
         return overridden != null ? overridden : original.call(player);
@@ -27,7 +32,8 @@ public abstract class SimulatedHoneyGlueMixin {
 
     @WrapOperation(
             method = "getHitResult",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getViewVector(F)Lnet/minecraft/world/phys/Vec3;"))
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getViewVector(F)Lnet/minecraft/world/phys/Vec3;"),
+            require = 0)
     private Vec3 unlockedcamera$glueRayDirection(Player player, float partialTick, Operation<Vec3> original) {
         Vec3 overridden = UnlockedCameraClient.crosshairRayDirection(player);
         return overridden != null ? overridden : original.call(player, partialTick);

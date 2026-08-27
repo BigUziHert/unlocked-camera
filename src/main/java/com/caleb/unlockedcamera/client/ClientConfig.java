@@ -26,7 +26,7 @@ public final class ClientConfig {
             .define("freelookKeepDirection", false);
 
     public static final ModConfigSpec.BooleanValue CROSSHAIR_ALWAYS = BUILDER
-            .comment("Always show the aim-corrected crosshair while the unlocked camera is active.")
+            .comment("Always show the crosshair while the unlocked camera is active. It is only aim-corrected while the shoulder offset is engaged; zoomed out past the shoulder gate it draws at screen center but aim follows the body's facing.")
             .define("crosshairAlways", false);
 
     public static final ModConfigSpec.BooleanValue CROSSHAIR_ON_SHOULDER_OFFSET = BUILDER

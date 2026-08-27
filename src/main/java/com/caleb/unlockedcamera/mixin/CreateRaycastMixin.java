@@ -14,10 +14,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * body rotation — which the shoulder offset decouples from the crosshair. While
  * the offset is engaged, aim those rays through the crosshair's actual target
  * instead. Applied only when Create is installed (see UnlockedCameraMixinPlugin).
+ *
+ * <p>Enhancement-only, so require = 0: if a Create update moves this method,
+ * the game launches with the compat disabled and a logged warning (see
+ * UnlockedCameraMixinPlugin#postApply) instead of crashing.
  */
 @Mixin(targets = "com.simibubi.create.foundation.utility.RaycastHelper", remap = false)
 public abstract class CreateRaycastMixin {
-    @Inject(method = "getTraceTarget", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "getTraceTarget", at = @At("HEAD"), cancellable = true, require = 0)
     private static void unlockedcamera$aimThroughCrosshair(Player player, double range, Vec3 origin, CallbackInfoReturnable<Vec3> cir) {
         Vec3 overridden = UnlockedCameraClient.createTraceTarget(player, range, origin);
         if (overridden != null) {

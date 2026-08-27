@@ -46,8 +46,10 @@ Mods > Unlocked Camera > Config; changes apply live):
 - `enableFreelook` — toggle freelook on/off, default on
 - `freelookKeepDirection` — on release, face where you were looking instead of
   easing back, default off
-- `crosshairAlways` — always draw the aim-corrected crosshair in the unlocked
-  camera, default off
+- `crosshairAlways` — always draw the crosshair in the unlocked camera,
+  default off. It is only aim-corrected while the shoulder offset is engaged;
+  zoomed out past the shoulder gate it draws at screen center but aim follows
+  the body's facing
 - `crosshairOnShoulderOffset` — draw it while the shoulder offset is engaged,
   default on
 - `showEnterMessage` — show the action-bar text when entering the unlocked
@@ -61,12 +63,17 @@ Mods > Unlocked Camera > Config; changes apply live):
 - `maxZoom` — farthest zoom, default 12 blocks
 - `freelookYawLimit` — how far left/right freelook can swing in degrees, default 90
 ## Development
-Requires JDK 21 (`gradle.properties` points Gradle at `C:/Program Files/Java/jdk-21`).
+Requires JDK 21. Gradle uses whatever `JAVA_HOME` points at, so set it per
+shell if the system default is older:
 ```powershell
+$env:JAVA_HOME = "C:\Program Files\Java\jdk-21"
 .\gradlew.bat runClient   # launch a dev client with the mod loaded
 .\gradlew.bat build       # build the release jar into build/libs/
 ```
 Key source files:
 - `src/main/java/com/caleb/unlockedcamera/UnlockedCameraMod.java` — mod entry point
 - `src/main/java/com/caleb/unlockedcamera/client/UnlockedCameraClient.java` — all camera logic (client only)
-- `src/main/java/com/caleb/unlockedcamera/mixin/` — Camera, Gui, and MouseHandler hooks
+- `src/main/java/com/caleb/unlockedcamera/client/` — config, linked config-screen sliders, Sable seat detection
+- `src/main/java/com/caleb/unlockedcamera/mixin/` — vanilla hooks (camera, GUI crosshair, mouse, outgoing
+  packet aim correction), config-screen slider/color tweaks, and presence-gated Create & Simulated
+  crosshair compat (see `UnlockedCameraMixinPlugin`)

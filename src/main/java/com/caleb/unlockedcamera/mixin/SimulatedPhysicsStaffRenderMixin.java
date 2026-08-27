@@ -15,12 +15,17 @@ import org.spongepowered.asm.mixin.injection.At;
  * selection box lands where you are aiming.
  *
  * <p>Applied only when Simulated is installed (see UnlockedCameraMixinPlugin).
+ *
+ * <p>Enhancement-only, so require = 0: if a Simulated update moves this call
+ * site, the game launches with the compat disabled and a logged warning (see
+ * UnlockedCameraMixinPlugin#postApply) instead of crashing.
  */
 @Mixin(targets = "dev.simulated_team.simulated.content.physics_staff.PhysicsStaffRenderHandler", remap = false)
 public abstract class SimulatedPhysicsStaffRenderMixin {
     @WrapOperation(
             method = "updateHoverPos",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;pick(DFZ)Lnet/minecraft/world/phys/HitResult;"))
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;pick(DFZ)Lnet/minecraft/world/phys/HitResult;"),
+            require = 0)
     private static HitResult unlockedcamera$staffHoverPick(LocalPlayer player, double hitDistance, float partialTick, boolean hitFluids, Operation<HitResult> original) {
         HitResult overridden = UnlockedCameraClient.crosshairPick(player, hitDistance, partialTick, hitFluids);
         return overridden != null ? overridden : original.call(player, hitDistance, partialTick, hitFluids);

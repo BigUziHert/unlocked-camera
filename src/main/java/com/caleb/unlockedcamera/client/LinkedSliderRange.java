@@ -29,11 +29,12 @@ public record LinkedSliderRange(OptionInstance.IntRange delegate,
         implements OptionInstance.SliderableValueSet<Integer> {
 
     /**
-     * A setting this slider's drags can push along: its live value in slider
-     * units, and its setter in config units (used by {@link Commit} to journal
-     * the push into the undo history).
+     * A setting this slider's drags can push along: its config key (so the
+     * screen's onChanged bookkeeping names the setting that actually moved),
+     * its live value in slider units, and its setter in config units (used by
+     * {@link Commit} to journal the push into the undo history).
      */
-    public record Linked(IntSupplier value, Consumer<Double> set) {}
+    public record Linked(String key, IntSupplier value, Consumer<Double> set) {}
 
     /**
      * Journals a finished gesture into the config screen's undo history: the
