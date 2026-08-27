@@ -1138,13 +1138,29 @@ public class UnlockedCameraClient {
             Vec3 direction = new Vec3(-left.x(), -left.y(), -left.z()).scale(sign);
             Vec3 to = from.add(direction.scale(rawClearance + 0.1));
             HitResult hit = mc.level.clip(new ClipContext(from, to, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, mc.player));
-            // Sable sublevel hits come back in far-away plot space with no
-            // usable location along this sideways ray — treat them as a miss
-            // (keep the default clearance) rather than reading the plot-space
-            // location as a huge clearance.
-            if (hit.getType() != HitResult.Type.MISS
-                    && hit.getLocation().distanceToSqr(from) <= Mth.square(rawClearance + 0.1 + 2.0)) {
-                rawClearance = (float) Math.max(0.0, hit.getLocation().distanceTo(from) - 0.1);
+            if (hit.getType() != HitResult.Type.MISS) {
+                if (hit.getLocation().distanceToSqr(from) <= Mth.square(rawClearance + 0.1 + 2.0)) {
+                    rawClearance = (float) Math.max(0.0, hit.getLocation().distanceTo(from) - 0.1);
+                } else {
+                    // Sable sublevel hit: the location is in far-away plot space,
+                    // but the sublevel-aware HitResult#distanceTo still gives the
+                    // true squared world distance from the player's feet, and the
+                    // hit lies on this sideways ray — solve
+                    // |from + t*dir - feet|^2 = distSqr for the exact clearance.
+                    // (Treating hulls as a miss let the offset slide the camera
+                    // into hull walls.)
+                    double distSqr = hit.distanceTo(mc.player);
+                    Vec3 rel = from.subtract(mc.player.position());
+                    double b = rel.dot(direction);
+                    double disc = b * b - rel.lengthSqr() + distSqr;
+                    if (disc >= 0.0) {
+                        double sq = Math.sqrt(disc);
+                        double t = -b - sq > 1.0E-4 ? -b - sq : -b + sq;
+                        if (t > 1.0E-4 && t <= rawClearance + 0.3) {
+                            rawClearance = (float) Math.max(0.0, t - 0.1);
+                        }
+                    }
+                }
             }
         }
 
@@ -1188,8 +1204,8 @@ public class UnlockedCameraClient {
         // away, which would never pull the camera in — a hull between camera
         // and player wouldn't constrain it. Their true world distance survives
         // only in the sublevel-aware HitResult#distanceTo (squared, from the
-        // entity's feet) — close enough for a collision cap whose rays are
-        // already jittered by 0.1.
+        // entity's feet); the hit lies on this ray, so the quadratic below
+        // recovers the exact along-ray distance from that.
         double maxHitSqr = Mth.square(desired + 2.0);
         for (int i = 0; i < 8; i++) {
             float ox = ((i & 1) * 2 - 1) * 0.1f;
@@ -1202,9 +1218,29 @@ public class UnlockedCameraClient {
                     position.z - forwards.z() * desired + oz);
             HitResult hit = level.clip(new ClipContext(from, to, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, entity));
             if (hit.getType() != HitResult.Type.MISS) {
-                float d = hit.getLocation().distanceToSqr(position) <= maxHitSqr
-                        ? (float) hit.getLocation().distanceTo(position)
-                        : (float) Math.sqrt(hit.distanceTo(entity));
+                float d;
+                if (hit.getLocation().distanceToSqr(position) <= maxHitSqr) {
+                    d = (float) hit.getLocation().distanceTo(position);
+                } else {
+                    // Solve |from - t*forwards - feet|^2 = distSqr for t, the
+                    // exact obstruction distance along this ray. Measuring
+                    // straight from the feet instead over-reads by up to an eye
+                    // height, letting the camera sink ~a block into hull walls
+                    // and roofs (the floor only escaped because the feet stand
+                    // on it).
+                    double distSqr = hit.distanceTo(entity);
+                    Vec3 rel = from.subtract(entity.position());
+                    double b = rel.x * forwards.x() + rel.y * forwards.y() + rel.z * forwards.z();
+                    double disc = b * b - rel.lengthSqr() + distSqr;
+                    if (disc >= 0.0) {
+                        double sq = Math.sqrt(disc);
+                        double t = b - sq > 1.0E-4 ? b - sq : b + sq;
+                        d = t > 1.0E-4 ? (float) t : (float) Math.sqrt(distSqr);
+                    } else {
+                        // Degenerate solve; fall back to the feet distance.
+                        d = (float) Math.sqrt(distSqr);
+                    }
+                }
                 if (d < limit) {
                     limit = d;
                 }
