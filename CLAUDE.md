@@ -21,11 +21,14 @@ approval.
 
 ## Architecture rules (learned the hard way — do not undo)
 
-1. NEVER rotate the camera or the player's body to correct aim. Better Third
-   Person owns the body and fights back (thrash/twitch). All projectile
-   correction lives in outgoing packets (ClientPacketListenerMixin): the
-   UseItem rotation rewrite plus the continuous rotation hold while a ranged
-   item is held.
+1. NEVER rotate the camera, and never rotate the player's body AS the aim
+   correction. Better Third Person owns the body and fights back
+   (thrash/twitch). The SHOT is corrected only in outgoing packets
+   (ClientPacketListenerMixin): the UseItem rotation rewrite plus the
+   continuous rotation hold while a ranged item is held. The body may turn
+   only as the damped cosmetic follow while drawing (turnPlayerWhileAiming,
+   bounded by MIN_AIM_TARGET_DISTANCE / MAX_AIM_STEP / MAX_AIM_PITCH) and in
+   the freelook snap — never to make a projectile land right.
 2. Server mechanism behind the hold: rotation reaches the server only inside
    movement packets; vanilla sends one only when the body turned; and
    crossbows fire along yHeadRot, which lags yRot by a tick — click-time

@@ -35,15 +35,36 @@ public abstract class ConfigScreenSliderMixin extends OptionsSubScreen {
     }
 
     /**
-     * Arrow keys adjust the slider under the mouse, no click-to-focus needed;
-     * a focused slider still works through the normal path below.
+     * Plain arrow keys adjust the slider under the mouse — no click-to-focus
+     * needed. A hovered slider wins over a focused one (point at what you
+     * want); with nothing hovered, the focused widget gets the key through the
+     * normal path below. Modified arrows (Ctrl/Alt/Shift+arrow) pass through.
      */
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (LinkedOptionSlider.hoverArrowKey(keyCode, scanCode, modifiers)) {
+        if (modifiers == 0 && LinkedOptionSlider.hoverArrowKey(keyCode, scanCode, modifiers)) {
             return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    /**
+     * A drag can end with the mouse off its widget while the row is scrolled
+     * out of view — nothing renders it, so its render-loop close never runs
+     * and the gesture would stay open (a hole in the undo journal). Close open
+     * gestures on every screen-level release, and when the screen goes away.
+     */
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        boolean handled = super.mouseReleased(mouseX, mouseY, button);
+        LinkedOptionSlider.closeOpenGestures();
+        return handled;
+    }
+
+    @Override
+    public void removed() {
+        super.removed();
+        LinkedOptionSlider.onScreenClosed();
     }
 
     @Shadow(remap = false)
@@ -81,8 +102,6 @@ public abstract class ConfigScreenSliderMixin extends OptionsSubScreen {
         int scaledMin = (int) Math.round(range.getMin() / step);
         int scaledMax = (int) Math.round(range.getMax() / step);
         OptionInstance.IntRange intRange = new OptionInstance.IntRange(scaledMin, scaledMax);
-        // The two zoom sliders stop at each other's live value: min can rise to
-        // meet max and max can drop to meet min, but they can never cross.
         java.util.function.IntFunction<Component> display =
                 value -> Component.literal(unlockedcamera$format(value * step));
         // The zoom pair pushes each other; the shoulder threshold lives inside
@@ -145,7 +164,6 @@ public abstract class ConfigScreenSliderMixin extends OptionsSubScreen {
                     java.util.List.of(), v -> {},
                     unlockedcamera$gestureCommit(key, target, java.util.List.of(), step), display);
         };
-        boolean linkedJournal = valueSet instanceof LinkedSliderRange;
         cir.setReturnValue(new ConfigurationScreen.ConfigurationSectionScreen.Element(
                 getTranslationComponent(key), getTooltipComponent(key, range),
                 new OptionInstance<>(getTranslationKey(key), getTooltip(key, range),
@@ -155,19 +173,9 @@ public abstract class ConfigScreenSliderMixin extends OptionsSubScreen {
                         newValue -> {
                             double newDouble = newValue * step;
                             if (newDouble != source.get()) {
-                                if (linkedJournal) {
-                                    // Journaled by the widget's Commit instead.
-                                    target.accept(newDouble);
-                                    onChanged(key);
-                                } else {
-                                    undoManager.add(v -> {
-                                        target.accept(v);
-                                        onChanged(key);
-                                    }, newDouble, v -> {
-                                        target.accept(v);
-                                        onChanged(key);
-                                    }, source.get());
-                                }
+                                // Journaled by the widget's Commit instead.
+                                target.accept(newDouble);
+                                onChanged(key);
                             }
                         })));
     }

@@ -54,7 +54,7 @@ public final class ClientConfig {
             .defineInRange("shoulderOffsetAmount", 0.75, 0.5, 1.0);
 
     public static final ModConfigSpec.DoubleValue SHOULDER_OFFSET_MAX_ZOOM = BUILDER
-            .comment("Apply the shoulder offset when the camera is at or closer than this distance, in blocks.")
+            .comment("Apply the shoulder offset when the camera is at or closer than this distance, in blocks. It eases in across the block above this, so it starts engaging one block earlier.")
             .defineInRange("shoulderOffsetMaxZoom", 4.0, 1.0, 64.0);
 
     public static final ModConfigSpec.DoubleValue FREELOOK_YAW_LIMIT = BUILDER

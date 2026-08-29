@@ -18,8 +18,10 @@ import org.spongepowered.asm.mixin.injection.At;
  * Applied only when Create is installed (see UnlockedCameraMixinPlugin).
  *
  * <p>Enhancement-only, so require = 0: if a Create update moves these call
- * sites, the game launches with the compat disabled and a logged warning (see
- * UnlockedCameraMixinPlugin#postApply) instead of crashing.
+ * sites, the game launches with
+ * the compat silently un-applied instead of crashing — no warning is
+ * possible: a bytecode check cannot see MixinExtras' late call-site
+ * rewiring (see UnlockedCameraMixinPlugin).
  */
 @Mixin(targets = "com.simibubi.create.content.contraptions.ContraptionHandlerClient", remap = false)
 public abstract class CreateContraptionRayMixin {

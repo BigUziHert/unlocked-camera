@@ -6,6 +6,9 @@ license="${mod_license}"
 modId="${mod_id}"
 version="${mod_version}"
 displayName="${mod_name}"
+# Client-only mod: servers without it are fully compatible, so don't mark
+# them incompatible in the server list.
+displayTest="IGNORE_ALL_VERSION"
 authors="Caleb"
 description='''
 An unlocked camera: adds a fourth perspective to the vanilla view cycle (F5).
@@ -22,11 +25,11 @@ config="${mod_id}.mixins.json"
     type="required"
     versionRange="[${neo_version},)"
     ordering="NONE"
-    side="BOTH"
+    side="CLIENT"
 
 [[dependencies.${mod_id}]]
     modId="minecraft"
     type="required"
     versionRange="${minecraft_version_range}"
     ordering="NONE"
-    side="BOTH"
+    side="CLIENT"

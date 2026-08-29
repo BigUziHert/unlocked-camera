@@ -57,7 +57,7 @@ Mods > Unlocked Camera > Config; changes apply live):
 - `enableShoulderOffset` — toggle the over-the-shoulder offset, default on
 - `shoulderOffsetAmount` — how far the camera slides over the shoulder in
   blocks (0.5 - 1.0), default 0.75
-- `shoulderOffsetMaxZoom` — apply the shoulder offset at or closer than this
+- `shoulderOffsetMaxZoom` — apply the shoulder offset at or closer than this (easing in from one block above)
   distance in blocks, default 4
 - `minZoom` — closest zoom, default 1 block
 - `maxZoom` — farthest zoom, default 12 blocks

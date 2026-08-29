@@ -23,8 +23,10 @@ import org.spongepowered.asm.mixin.injection.At;
  * <p>Applied only when Create is installed (see UnlockedCameraMixinPlugin).
  *
  * <p>Enhancement-only, so require = 0: if a Create update moves these call
- * sites, the game launches with the compat disabled and a logged warning (see
- * UnlockedCameraMixinPlugin#postApply) instead of crashing.
+ * sites, the game launches with
+ * the compat silently un-applied instead of crashing — no warning is
+ * possible: a bytecode check cannot see MixinExtras' late call-site
+ * rewiring (see UnlockedCameraMixinPlugin).
  */
 @Mixin(targets = "com.simibubi.create.foundation.block.BigOutlines", remap = false)
 public abstract class CreateBigOutlinesMixin {
@@ -42,6 +44,12 @@ public abstract class CreateBigOutlinesMixin {
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;getAttributeValue(Lnet/minecraft/core/Holder;)D"),
             require = 0)
     private static double unlockedcamera$bigOutlineRange(LocalPlayer player, Holder<?> attribute, Operation<Double> original) {
-        return original.call(player, attribute) + UnlockedCameraClient.crosshairRaySetback(player);
+        double value = original.call(player, attribute);
+        // Reach attributes only — see the honey glue mixin's range wrap.
+        if (attribute != net.minecraft.world.entity.ai.attributes.Attributes.BLOCK_INTERACTION_RANGE
+                && attribute != net.minecraft.world.entity.ai.attributes.Attributes.ENTITY_INTERACTION_RANGE) {
+            return value;
+        }
+        return value + UnlockedCameraClient.crosshairRaySetback(player);
     }
 }

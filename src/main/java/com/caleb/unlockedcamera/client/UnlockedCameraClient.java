@@ -200,10 +200,15 @@ public class UnlockedCameraClient {
             }
         }
 
-        // Master switch off: every feature stands down.
+        // Master switch off: every feature stands down. A pending seat resume
+        // dies with it — letting it survive meant a forced camera switch firing
+        // whenever the switch came back on, however much later. The server may
+        // still hold a stamped aim, so tell it the true rotation on the way out.
         if (!ClientConfig.modEnabled()) {
             active = false;
-            dropHeldAim();
+            resumeAfterSeat = false;
+            lastSeatCameraType = null;
+            releaseHeldAim(mc);
             return;
         }
 
@@ -238,6 +243,10 @@ public class UnlockedCameraClient {
             // UseItem rewrite, and without the hold a crossbow shot fired
             // mid-freelook flies along the head rotation, a tick behind.
             active = false;
+            // A pending seat resume must not survive into the disabled state
+            // either — it would force a camera switch on re-enable.
+            resumeAfterSeat = false;
+            lastSeatCameraType = null;
         } else {
             // Dismounted from a Sable seat. What the seat's view cycle ended on
             // decides the view now: Sable's own contraption camera exits to a first
@@ -270,7 +279,7 @@ public class UnlockedCameraClient {
             // vanilla view.
             if (!isVanillaCameraType(mc.options.getCameraType())) {
                 active = false;
-                dropHeldAim();
+                releaseHeldAim(mc);
                 return;
             }
 
@@ -332,6 +341,19 @@ public class UnlockedCameraClient {
                     freshAim[0], freshAim[1], mc.player.onGround()));
             lastSentAim = freshAim;
             lastAimSendTick = heldAimTicks;
+        }
+
+        // A use packet was rewritten while no hold was running (eating,
+        // blocking, a spyglass — with the crosshair aim active): the server
+        // has the stamped aim and nothing else will correct it, so send the
+        // true rotation right back. Skipped if a hold started this tick — the
+        // hold owns the rotation then.
+        if (aimResyncRequested) {
+            aimResyncRequested = false;
+            if (cachedHeldAim == null && mc.getConnection() != null) {
+                mc.getConnection().send(new ServerboundMovePlayerPacket.Rot(
+                        mc.player.getYRot(), mc.player.getXRot(), mc.player.onGround()));
+            }
         }
 
         // Something else (another mod, spectator, etc.) changed the view out from under us.
@@ -406,7 +428,7 @@ public class UnlockedCameraClient {
         if (anim != UseAnim.BOW && anim != UseAnim.CROSSBOW && anim != UseAnim.SPEAR) {
             return;
         }
-        float[] aim = crosshairAimAngles();
+        float[] aim = continuousAimAngles(); // the tick's cached ray — never recompute it
         if (aim == null || aim[2] < MIN_AIM_TARGET_DISTANCE || Math.abs(aim[1]) > MAX_AIM_PITCH) {
             return;
         }
@@ -425,8 +447,7 @@ public class UnlockedCameraClient {
 
     /**
      * The yaw/pitch the player must face for a projectile fired from their eyes
-     * to land where the centered crosshair points, or null while the shoulder
-     * offset is disengaged. Returns {yaw, pitch, distance from eye to target}.
+     * to land where the centered crosshair points, or null while the crosshair aim is inactive (shoulder offset off, no freelook deflection). Returns {yaw, pitch, distance from eye to target}.
      */
     public static float[] crosshairAimAngles() {
         Minecraft mc = Minecraft.getInstance();
@@ -463,16 +484,27 @@ public class UnlockedCameraClient {
         // (tall grass, flowers), so aim must ignore them too. The gap walk keeps
         // blocks between the camera and the player from becoming the target.
         HitResult hit = gapWalkClip(origin, direction, end, playerDepth,
-                ClipContext.Block.COLLIDER, mc.player);
+                ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, mc.player);
 
         Vec3 aimPoint = hit.getLocation();
+        // Sable plot-space hit: recover the true along-ray point FIRST — the
+        // entity sweep and the aim both need it. Raw plot coordinates read as
+        // huge distances, which left the sweep unbounded (an occluded mob beat
+        // the hull in front of it) and the old post-sweep recovery always took
+        // the far sphere root, over-shooting near hull surfaces by up to a
+        // couple of blocks when looking down.
+        boolean plotSpace = hit.getType() != HitResult.Type.MISS
+                && aimPoint.distanceToSqr(origin) > Mth.square(range + 1.0);
+        if (plotSpace) {
+            double t = plotSpaceAlongRay(hit, origin, direction, mc.player, playerDepth);
+            aimPoint = origin.add(direction.scale(t > 0.0 ? Math.min(t, range) : range));
+        }
 
         // A mob standing under the crosshair is the target, not the backdrop
         // behind it: sweep entities along the ray out to the block hit, the
-        // same way interaction targeting does. (Sable plot-space block hits
-        // read as huge distances and simply allow the full-ray sweep.)
+        // same way interaction targeting does.
         double blockGeomSqr = hit.getType() != HitResult.Type.MISS
-                ? aimPoint.distanceToSqr(origin)
+                ? aimPoint.distanceToSqr(origin) // plot hits already recovered above
                 : Mth.square(range);
         double entitySearch = Math.min(Math.sqrt(blockGeomSqr), range);
         Vec3 sweepStart = origin.add(direction.scale(Math.min(playerDepth, entitySearch)));
@@ -490,7 +522,7 @@ public class UnlockedCameraClient {
                 entityPoint = entityPoint.add(toBody.scale(Math.min(0.2, toBodyLen * 0.35) / toBodyLen));
             }
             aimPoint = entityPoint;
-        } else if (hit instanceof BlockHitResult buriedHit && hit.getType() == HitResult.Type.BLOCK) {
+        } else if (!plotSpace && hit instanceof BlockHitResult buriedHit && hit.getType() == HitResult.Type.BLOCK) {
             // Bury the aim point toward the struck block's CENTRE (capped). A
             // hit on an edge or corner is a graze — the random projectile spread
             // then decides each shot, with misses sailing far past. Pulling the
@@ -501,21 +533,6 @@ public class UnlockedCameraClient {
             if (toCenterLen > 1.0E-4) {
                 aimPoint = aimPoint.add(toCenter.scale(Math.min(0.2, toCenterLen * 0.35) / toCenterLen));
             }
-        }
-        // Sable sublevel hits are in plot-space coordinates with no usable world
-        // direction — but Sable's sublevel-aware HitResult#distanceTo still gives
-        // the TRUE squared world distance from the player. The hit lies on our
-        // camera ray, so solve |origin + t*dir - playerPos|^2 = distSqr for t to
-        // recover the world-space aim point exactly.
-        if (entityAim == null && aimPoint.distanceToSqr(origin) > Mth.square(range + 1.0)) {
-            double distSqr = hit.distanceTo(mc.player);
-            Vec3 cameraFromFeet = origin.subtract(mc.player.position());
-            double b = 2.0 * cameraFromFeet.dot(direction);
-            double c = cameraFromFeet.lengthSqr() - distSqr;
-            double discriminant = b * b - 4.0 * c;
-            double t = discriminant >= 0.0 ? (-b + Math.sqrt(discriminant)) / 2.0 : -1.0;
-            // Fall back to a far convergence point if the solve degenerates.
-            aimPoint = origin.add(direction.scale(t > 0.0 ? Math.min(t, range) : range));
         }
 
         Vec3 aim = aimPoint.subtract(eye);
@@ -546,6 +563,32 @@ public class UnlockedCameraClient {
     private static void dropHeldAim() {
         cachedHeldAim = null;
         lastSentAim = null;
+        // Rewind the throttle too, so the first tick of a resumed hold sends
+        // instead of losing the very race the hold exists to win.
+        lastAimSendTick = heldAimTicks - 2;
+    }
+
+    /**
+     * Drop the held aim AND tell the server the true rotation once — for the
+     * stand-down paths where the server still holds a stamped aim and vanilla
+     * won't send rotation again until the body next turns.
+     */
+    private static void releaseHeldAim(Minecraft mc) {
+        boolean hadAim = cachedHeldAim != null;
+        dropHeldAim();
+        if (hadAim && mc.player != null && mc.getConnection() != null) {
+            mc.getConnection().send(new ServerboundMovePlayerPacket.Rot(
+                    mc.player.getYRot(), mc.player.getXRot(), mc.player.onGround()));
+        }
+    }
+
+    /** Set when a use packet was aim-rewritten with no hold running (food, a
+     * shield — anything unranged used while the crosshair aim is active): the
+     * stamp would persist server-side with no hold to end and correct it. */
+    private static boolean aimResyncRequested;
+
+    public static void requestAimResync() {
+        aimResyncRequested = true;
     }
 
     /**
@@ -657,7 +700,8 @@ public class UnlockedCameraClient {
         active = true;
         setCameraType(mc, CameraType.THIRD_PERSON_BACK);
         targetDistance = Mth.clamp(VANILLA_DISTANCE, ClientConfig.minZoom(), ClientConfig.maxZoom());
-        // Enter exactly where vanilla third person sits - no zoom animation.
+        // Enter at vanilla's distance; when the configured zoom differs the
+        // camera glides out to it from here (settled by design).
         smoothedDistance = VANILLA_DISTANCE;
         lastFrameNanos = 0L;
         collisionCap = VANILLA_DISTANCE;
@@ -693,7 +737,7 @@ public class UnlockedCameraClient {
      * tunnel through), so it is kept.
      */
     private static HitResult gapWalkClip(Vec3 origin, Vec3 direction, Vec3 end,
-            double playerDepth, ClipContext.Block shapeMode, Entity entity) {
+            double playerDepth, ClipContext.Block shapeMode, ClipContext.Fluid fluidMode, Entity entity) {
         Minecraft mc = Minecraft.getInstance();
         double maxHitSqr = Mth.square(end.subtract(origin).length() + 2.0);
         double startParam = 0.0;
@@ -701,7 +745,7 @@ public class UnlockedCameraClient {
         for (int i = 0; ; i++) {
             hit = mc.level.clip(new ClipContext(
                     origin.add(direction.scale(startParam)), end,
-                    shapeMode, ClipContext.Fluid.NONE, entity));
+                    shapeMode, fluidMode, entity));
             if (i >= 8 || !(hit instanceof BlockHitResult blockHit)
                     || hit.getType() != HitResult.Type.BLOCK) {
                 break;
@@ -720,6 +764,33 @@ public class UnlockedCameraClient {
             startParam = exit + 1.0E-4;
         }
         return hit;
+    }
+
+    /**
+     * True along-ray distance to a Sable plot-space hit. The hit's location is
+     * unusable, but the sublevel-aware HitResult#distanceTo still gives the
+     * true squared world distance from the entity's feet, and the hit lies on
+     * the ray: solve |origin + t*dir - feet|^2 = distSqr. The sphere around the
+     * feet meets the ray twice and a feet distance cannot tell the crossings
+     * apart; the near root is taken when it lands at or past
+     * {@code nearRootFloor} (a hit in front of the player), the far root
+     * otherwise (distant terrain, where the near root goes negative). Layered
+     * decks can defeat the choice — inherent to a feet-relative distance.
+     * Returns -1 when the solve degenerates, which a true on-ray hit cannot
+     * produce, so: measurement noise.
+     */
+    private static double plotSpaceAlongRay(HitResult hit, Vec3 origin, Vec3 direction,
+            Entity entity, double nearRootFloor) {
+        double distSqr = hit.distanceTo(entity);
+        Vec3 rel = origin.subtract(entity.position());
+        double b = rel.dot(direction);
+        double disc = b * b - rel.lengthSqr() + distSqr;
+        if (disc < 0.0) {
+            return -1.0;
+        }
+        double sq = Math.sqrt(disc);
+        double near = -b - sq;
+        return near >= nearRootFloor ? near : -b + sq;
     }
 
     /** Distance along the ray (unit direction) where it leaves the block's 1x1x1 cell. */
@@ -764,13 +835,24 @@ public class UnlockedCameraClient {
 
         Vec3 end = origin.add(direction.scale(maxRange));
         HitResult blockHit = gapWalkClip(origin, direction, end, playerDepth,
-                ClipContext.Block.OUTLINE, entity);
-        // Geometric distance along our ray, for the entity sweep. Sable sublevel
-        // hits report plot-space locations thousands of blocks away — treat those
-        // as "full ray" here; reach is validated separately below.
-        double blockGeomSqr = blockHit.getType() != HitResult.Type.MISS
-                ? blockHit.getLocation().distanceToSqr(origin)
-                : Mth.square(maxRange);
+                ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, entity);
+        // Geometric distance along our ray, for the entity sweep and the
+        // entity-vs-block tie-break. Sable sublevel hits report plot-space
+        // locations thousands of blocks away — recover the true along-ray
+        // distance, or the sweep goes unbounded and an entity behind a hull
+        // wall beats the wall (then fails entity reach and targets nothing).
+        double blockGeomSqr;
+        if (blockHit.getType() == HitResult.Type.MISS) {
+            blockGeomSqr = Mth.square(maxRange);
+        } else {
+            double rawSqr = blockHit.getLocation().distanceToSqr(origin);
+            if (rawSqr > Mth.square(maxRange + 2.0)) {
+                double t = plotSpaceAlongRay(blockHit, origin, direction, entity, playerDepth);
+                blockGeomSqr = Mth.square(t > 0.0 ? Math.min(t, maxRange) : maxRange);
+            } else {
+                blockGeomSqr = rawSqr;
+            }
+        }
         double entitySearch = Math.min(Math.sqrt(blockGeomSqr), maxRange);
         // Sweep for entities only from the player's depth outward, for the same
         // reason the block clip walks the gap: an entity between the camera and
@@ -838,8 +920,18 @@ public class UnlockedCameraClient {
             return null;
         }
         Vector3f forward = camera.getLookVector();
-        double setback = camera.getPosition().distanceTo(player.getEyePosition());
-        return origin.add(new Vec3(forward.x(), forward.y(), forward.z()).scale(range + setback));
+        double total = range + crosshairRaySetback(player);
+        // Create clamps its reach to mc.hitResult measured from this (wrapped)
+        // origin; blindly re-adding the setback then overshoots the crosshair
+        // hit by that much and selects contraptions through the block in front
+        // of them. Cap the endpoint at the crosshair hit instead.
+        if (mc.hitResult != null && mc.hitResult.getType() != HitResult.Type.MISS) {
+            double hitSqr = mc.hitResult.getLocation().distanceToSqr(origin);
+            if (hitSqr <= Mth.square(total + 2.0)) {
+                total = Math.min(total, Math.sqrt(hitSqr) + 0.05);
+            }
+        }
+        return origin.add(new Vec3(forward.x(), forward.y(), forward.z()).scale(total));
     }
 
     /**
@@ -870,7 +962,7 @@ public class UnlockedCameraClient {
      * the only call site (the physics staff's drag handler) is a client-only
      * class that always acts for the local player.
      *
-     * <p>Returns null while the shoulder offset is disengaged, or when the
+     * <p>Returns null while the crosshair aim is inactive (shoulder offset off, no freelook deflection), or when the
      * crosshair ray never reaches that distance from the eye.
      */
     public static Vec3 crosshairOffsetFromEye(double distance) {
@@ -903,8 +995,7 @@ public class UnlockedCameraClient {
 
     /**
      * Crosshair-aligned replacement for {@code Entity#pick}, which raycasts from
-     * the entity's eye along its body look. Returns null while the shoulder offset
-     * is disengaged, or when the pick is for someone other than the local player,
+     * the entity's eye along its body look. Returns null while the crosshair aim is inactive (shoulder offset off, no freelook deflection), or when the pick is for someone other than the local player,
      * so the caller keeps vanilla behaviour.
      */
     public static HitResult crosshairPick(Entity entity, double hitDistance, float partialTick, boolean hitFluids) {
@@ -918,16 +1009,19 @@ public class UnlockedCameraClient {
         }
         Vector3f forward = camera.getLookVector();
         Vec3 origin = camera.getPosition();
-        Vec3 end = origin.add(new Vec3(forward.x(), forward.y(), forward.z())
-                .scale(hitDistance + crosshairRaySetback(mc.player)));
-        return mc.level.clip(new ClipContext(origin, end, ClipContext.Block.OUTLINE,
-                hitFluids ? ClipContext.Fluid.ANY : ClipContext.Fluid.NONE, entity));
+        Vec3 direction = new Vec3(forward.x(), forward.y(), forward.z());
+        double playerDepth = Math.max(0.0, mc.player.getEyePosition().subtract(origin).dot(direction));
+        Vec3 end = origin.add(direction.scale(hitDistance + crosshairRaySetback(mc.player)));
+        // Walk the camera-player gap like every other crosshair ray, so grass
+        // or blocks behind the character can't become the staff's target.
+        return gapWalkClip(origin, direction, end, playerDepth, ClipContext.Block.OUTLINE,
+                hitFluids ? ClipContext.Fluid.ANY : ClipContext.Fluid.NONE, entity);
     }
 
     /**
      * How far the camera sits behind the player's eyes, so a raycast re-based onto
      * the camera can extend its range and keep the same reach in front of the
-     * player. Zero while the shoulder offset is disengaged or the raycast is for
+     * player. Zero while the crosshair aim is inactive (shoulder offset off, no freelook deflection) or the raycast is for
      * someone other than the local player.
      */
     public static double crosshairRaySetback(net.minecraft.world.entity.player.Player player) {
@@ -936,11 +1030,19 @@ public class UnlockedCameraClient {
             return 0.0;
         }
         Camera camera = mc.gameRenderer.getMainCamera();
-        return camera.isInitialized() ? camera.getPosition().distanceTo(mc.player.getEyePosition()) : 0.0;
+        if (!camera.isInitialized()) {
+            return 0.0;
+        }
+        // The projection onto the camera forward, not the straight-line
+        // distance: the sideways shoulder offset inflates |camera - eye| and
+        // handed the compat rays a small reach bonus over first person.
+        Vec3 camPos = camera.getPosition();
+        Vector3f f = camera.getLookVector();
+        Vec3 eye = mc.player.getEyePosition();
+        return Math.max(0.0, (eye.x - camPos.x) * f.x() + (eye.y - camPos.y) * f.y() + (eye.z - camPos.z) * f.z());
     }
 
-    /** Direction of the crosshair ray, or null while the shoulder offset is
-     * disengaged or the ray is for someone other than the local player. */
+    /** Direction of the crosshair ray, or null while the crosshair aim is inactive (shoulder offset off, no freelook deflection) or the ray is for someone other than the local player. */
     public static Vec3 crosshairRayDirection(net.minecraft.world.entity.player.Player player) {
         Minecraft mc = Minecraft.getInstance();
         if (!crosshairAimActive() || mc.player == null || player != mc.player) {
@@ -1243,8 +1345,12 @@ public class UnlockedCameraClient {
                     double b = rel.x * forwards.x() + rel.y * forwards.y() + rel.z * forwards.z();
                     double disc = b * b - rel.lengthSqr() + distSqr;
                     if (disc >= 0.0) {
-                        double sq = Math.sqrt(disc);
-                        double t = b - sq > 1.0E-4 ? b - sq : b + sq;
+                        // Far root, always: this ray starts at the eye, and a
+                        // hull hit lies past the ray's closest approach to the
+                        // feet — the near sphere crossing is open air, and
+                        // preferring it collapsed the camera onto the head
+                        // past 45 degrees of pitch on Sable decks.
+                        double t = b + Math.sqrt(disc);
                         d = t > 1.0E-4 ? (float) t : (float) Math.sqrt(distSqr);
                     } else {
                         // Degenerate solve; fall back to the feet distance.

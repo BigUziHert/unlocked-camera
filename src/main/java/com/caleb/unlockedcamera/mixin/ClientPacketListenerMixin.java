@@ -47,9 +47,20 @@ public abstract class ClientPacketListenerMixin {
         if (!(packet instanceof ServerboundUseItemPacket use)) {
             return packet;
         }
-        float[] aim = UnlockedCameraClient.crosshairAimAngles();
+        // The per-tick cache first — recomputing per packet is the Sable
+        // slideshow the cache exists to prevent.
+        float[] aim = UnlockedCameraClient.continuousAimAngles();
         if (aim == null) {
-            return packet;
+            aim = UnlockedCameraClient.crosshairAimAngles();
+            if (aim == null) {
+                return packet;
+            }
+            // No hold is running: nothing ranged in hand (food, a shield, a
+            // spyglass). Correcting the use still helps any modded item that
+            // fires on use, but the stamp would persist server-side with no
+            // hold to end it — ask the tick handler to send the true rotation
+            // right back.
+            UnlockedCameraClient.requestAimResync();
         }
         return new ServerboundUseItemPacket(use.getHand(), use.getSequence(), aim[0], aim[1]);
     }

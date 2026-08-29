@@ -104,6 +104,7 @@ public final class LinkedOptionSlider extends AbstractOptionSliderButton {
             return;
         }
         gestureOpen = true;
+        openGestures.add(this);
         gestureStartOwn = range.ownValue().getAsInt();
         if (!instance.get().equals(gestureStartOwn)) {
             instance.set(gestureStartOwn);
@@ -120,6 +121,7 @@ public final class LinkedOptionSlider extends AbstractOptionSliderButton {
             return;
         }
         gestureOpen = false;
+        openGestures.remove(this);
         List<LinkedSliderRange.Linked> links = range.linked();
         Integer[] starts = linkedStarts;
         linkedStarts = new Integer[links.size()];
@@ -137,7 +139,9 @@ public final class LinkedOptionSlider extends AbstractOptionSliderButton {
         if (newOwn == gestureStartOwn && !linkedChanged) {
             return;
         }
-        options.save();
+        // No options.save(): these back ModConfigSpec values (memory-only
+        // writes, flushed by the screen's own close), and saving vanilla's
+        // options.txt here rewrote it once per arrow-key auto-repeat.
         onValueChanged.accept(instance.get());
         range.commit().commit(gestureStartOwn, newOwn, starts, nows);
     }
@@ -149,20 +153,40 @@ public final class LinkedOptionSlider extends AbstractOptionSliderButton {
     }
 
     private static LinkedOptionSlider hovered;
-    private static long hoveredNanos;
+    /** Every widget with an open journaling gesture, so a screen-level release
+     * or the screen closing can commit gestures whose widget stopped
+     * rendering (scrolled out of view) before the button came up. */
+    private static final java.util.Set<LinkedOptionSlider> openGestures =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
 
     /**
      * Routes an arrow key to the slider under the mouse — hovering is enough,
-     * no click-to-focus needed (focused sliders still work through the normal
-     * path). Called from the configuration screen's keyPressed override.
+     * no click-to-focus needed. A hovered slider wins over a focused one; with
+     * nothing hovered, the focused slider gets the key through the screen's
+     * normal path. Called from the screen's keyPressed override. Freshness
+     * comes from hover tracking itself (cleared on un-hover and screen close),
+     * not a frame-time window — which broke down below 10 fps.
      */
     public static boolean hoverArrowKey(int keyCode, int scanCode, int modifiers) {
         LinkedOptionSlider target = hovered;
-        return (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT
-                        || keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT)
+        return (keyCode == GLFW.GLFW_KEY_LEFT || keyCode == GLFW.GLFW_KEY_RIGHT)
                 && target != null && target.isHovered()
-                && System.nanoTime() - hoveredNanos < 100_000_000L
                 && target.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    /** Close every gesture still open — see {@link #openGestures}. */
+    public static void closeOpenGestures() {
+        for (LinkedOptionSlider slider : openGestures.toArray(new LinkedOptionSlider[0])) {
+            slider.finishGesture();
+        }
+    }
+
+    /** The screen is going away: commit open gestures and forget the hovered
+     * widget, so a dead slider can never take an arrow key or keep its screen
+     * reachable from a static. */
+    public static void onScreenClosed() {
+        closeOpenGestures();
+        hovered = null;
     }
 
     @Override
@@ -173,11 +197,17 @@ public final class LinkedOptionSlider extends AbstractOptionSliderButton {
             // increase and the idle re-sync snaps it back, making arrows
             // decrease-only. Step by exactly one int step per press through
             // the same apply path, journaled as its own gesture.
+            boolean mouseGestureOwns = gestureOpen;
             int stepped = range.fromSliderValue(this.value) + (keyCode == GLFW.GLFW_KEY_LEFT ? -1 : 1);
             this.value = Mth.clamp(range.toSliderValue(stepped), 0.0, 1.0);
             applyValue();
             updateMessage();
-            finishGesture();
+            // An arrow tapped mid-drag joins the mouse's gesture instead of
+            // splitting one drag into several undo steps — the drag's own
+            // release commits both together.
+            if (!mouseGestureOwns) {
+                finishGesture();
+            }
             return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
@@ -188,7 +218,8 @@ public final class LinkedOptionSlider extends AbstractOptionSliderButton {
         super.renderWidget(guiGraphics, mouseX, mouseY, partialTick);
         if (isHovered()) {
             hovered = this;
-            hoveredNanos = System.nanoTime();
+        } else if (hovered == this) {
+            hovered = null;
         }
         // The release landed off the widget (positional mouseReleased routing
         // never calls onRelease then): close the gesture as soon as the

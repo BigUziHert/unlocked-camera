@@ -4,6 +4,7 @@ import com.caleb.unlockedcamera.client.UnlockedCameraClient;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import net.minecraft.core.Holder;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
@@ -17,8 +18,10 @@ import org.spongepowered.asm.mixin.injection.At;
  * <p>Applied only when Simulated is installed (see UnlockedCameraMixinPlugin).
  *
  * <p>Enhancement-only, so require = 0: if a Simulated update moves these call
- * sites, the game launches with the compat disabled and a logged warning (see
- * UnlockedCameraMixinPlugin#postApply) instead of crashing.
+ * sites, the game launches with
+ * the compat silently un-applied instead of crashing — no warning is
+ * possible: a bytecode check cannot see MixinExtras' late call-site
+ * rewiring (see UnlockedCameraMixinPlugin).
  */
 @Mixin(targets = "dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueClientHandler", remap = false)
 public abstract class SimulatedHoneyGlueMixin {
@@ -52,6 +55,13 @@ public abstract class SimulatedHoneyGlueMixin {
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getAttributeValue(Lnet/minecraft/core/Holder;)D"),
             require = 0)
     private double unlockedcamera$glueRayRange(Player player, Holder<?> attribute, Operation<Double> original) {
-        return original.call(player, attribute) + UnlockedCameraClient.crosshairRaySetback(player);
+        double value = original.call(player, attribute);
+        // Only reach attributes get the setback: getAttributeValue is a common
+        // enough call that a Simulated update could add another attribute read
+        // to these methods, and require = 0 would never flag the mismatch.
+        if (attribute != Attributes.BLOCK_INTERACTION_RANGE && attribute != Attributes.ENTITY_INTERACTION_RANGE) {
+            return value;
+        }
+        return value + UnlockedCameraClient.crosshairRaySetback(player);
     }
 }

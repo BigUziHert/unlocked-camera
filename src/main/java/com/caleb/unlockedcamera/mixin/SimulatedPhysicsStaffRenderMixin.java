@@ -17,8 +17,10 @@ import org.spongepowered.asm.mixin.injection.At;
  * <p>Applied only when Simulated is installed (see UnlockedCameraMixinPlugin).
  *
  * <p>Enhancement-only, so require = 0: if a Simulated update moves this call
- * site, the game launches with the compat disabled and a logged warning (see
- * UnlockedCameraMixinPlugin#postApply) instead of crashing.
+ * site, the game launches with
+ * the compat silently un-applied instead of crashing — no warning is
+ * possible: a bytecode check cannot see MixinExtras' late call-site
+ * rewiring (see UnlockedCameraMixinPlugin).
  */
 @Mixin(targets = "dev.simulated_team.simulated.content.physics_staff.PhysicsStaffRenderHandler", remap = false)
 public abstract class SimulatedPhysicsStaffRenderMixin {
