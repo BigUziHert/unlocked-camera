@@ -23,6 +23,8 @@ import net.minecraft.world.entity.projectile.ProjectileUtil;
 import net.minecraft.world.item.UseAnim;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
@@ -775,7 +777,7 @@ public class UnlockedCameraClient {
             hit = mc.level.clip(new ClipContext(
                     origin.add(direction.scale(startParam)), end,
                     shapeMode, fluidMode, entity));
-            if (i >= 8 || !(hit instanceof BlockHitResult blockHit)
+            if (!(hit instanceof BlockHitResult blockHit)
                     || hit.getType() != HitResult.Type.BLOCK) {
                 break;
             }
@@ -788,6 +790,20 @@ public class UnlockedCameraClient {
             }
             double exit = rayExitOfBlock(blockHit.getBlockPos(), origin, direction);
             if (exit >= playerDepth || exit <= startParam || !Double.isFinite(exit)) {
+                break;
+            }
+            if (i >= 8) {
+                // Iteration cap hit while still inside the gap (9+ camera-
+                // transparent solids stacked between camera and player, e.g. a
+                // deep glass cube crossed diagonally): jump the final clip to
+                // the player's depth instead of returning this block — it is
+                // BEHIND the character, and aiming or picking it reverses the
+                // shot. A straddling block yields an inside-hit AT the player,
+                // which the aim path drops as too close and reach filtering
+                // treats sanely.
+                hit = mc.level.clip(new ClipContext(
+                        origin.add(direction.scale(playerDepth)), end,
+                        shapeMode, fluidMode, entity));
                 break;
             }
             startParam = exit + 1.0E-4;
@@ -921,23 +937,10 @@ public class UnlockedCameraClient {
     }
 
     /**
-     * Called from {@link com.caleb.unlockedcamera.mixin.CreateContraptionRayMixin}:
-     * origin for Create's contraption raycast. The camera position, so the ray IS
-     * the crosshair ray at every depth. Returns null to use Create's own (eye).
-     */
-    public static Vec3 contraptionRayOrigin(net.minecraft.client.player.LocalPlayer player) {
-        Minecraft mc = Minecraft.getInstance();
-        if (!crosshairAimActive() || player != mc.player) {
-            return null;
-        }
-        Camera camera = mc.gameRenderer.getMainCamera();
-        return camera.isInitialized() ? camera.getPosition() : null;
-    }
-
-    /**
-     * Companion to {@link #contraptionRayOrigin}: the ray endpoint, along the
-     * camera direction, extended by the camera's setback behind the player so the
-     * effective reach in front of the player is unchanged.
+     * Companion to {@link #crosshairRayGapFreeOrigin} for Create's contraption
+     * raycast: the ray endpoint along the camera direction. The origin already
+     * sits at the player's depth, so the raw range IS the reach in front of the
+     * player — no setback re-add.
      */
     public static Vec3 contraptionRayTarget(net.minecraft.world.entity.player.Player player, double range, Vec3 origin) {
         Minecraft mc = Minecraft.getInstance();
@@ -949,18 +952,29 @@ public class UnlockedCameraClient {
             return null;
         }
         Vector3f forward = camera.getLookVector();
-        double total = range + crosshairRaySetback(player);
-        // Create clamps its reach to mc.hitResult measured from this (wrapped)
-        // origin; blindly re-adding the setback then overshoots the crosshair
-        // hit by that much and selects contraptions through the block in front
-        // of them. Cap the endpoint at the crosshair hit instead.
+        Vec3 direction = new Vec3(forward.x(), forward.y(), forward.z());
+        double total = range;
+        // Cap the endpoint at the crosshair hit, or the ray selects
+        // contraptions through the block in front of them (Create's own reach
+        // clamp measured the same way disarms identically).
         if (mc.hitResult != null && mc.hitResult.getType() != HitResult.Type.MISS) {
             double hitSqr = mc.hitResult.getLocation().distanceToSqr(origin);
             if (hitSqr <= Mth.square(total + 2.0)) {
                 total = Math.min(total, Math.sqrt(hitSqr) + 0.05);
+            } else {
+                // Sable plot-space location: the raw distance is astronomical,
+                // which silently DISARMED this cap on Aeronautics decks — a
+                // right-click could reach a contraption behind the hull wall
+                // the crosshair rested on. Recover the true along-ray distance
+                // instead (the origin already sits at the player's depth, so
+                // the near-root floor is zero).
+                double t = plotSpaceAlongRay(mc.hitResult, origin, direction, mc.player, 0.0);
+                if (t > 0.0) {
+                    total = Math.min(total, t + 0.05);
+                }
             }
         }
-        return origin.add(new Vec3(forward.x(), forward.y(), forward.z()).scale(total));
+        return origin.add(direction.scale(total));
     }
 
     /**
@@ -980,6 +994,78 @@ public class UnlockedCameraClient {
         }
         Camera camera = mc.gameRenderer.getMainCamera();
         return camera.isInitialized() ? camera.getPosition() : null;
+    }
+
+    /**
+     * Origin for compat rays that must not cover the camera-player gap: the
+     * point ON the crosshair ray at the player's own depth. A ray traced from
+     * here with the mod's RAW (un-setback) reach matches first-person reach in
+     * front of the player, and can never claim blocks or entities BEHIND the
+     * character — the region the mod's own picks exclude via gapWalkClip and
+     * the entity-sweep start. Null under the same conditions as
+     * {@link #crosshairRayOrigin}.
+     */
+    public static Vec3 crosshairRayGapFreeOrigin(net.minecraft.world.entity.player.Player player) {
+        Vec3 origin = crosshairRayOrigin(player);
+        if (origin == null) {
+            return null;
+        }
+        Vec3 direction = crosshairRayDirection(player);
+        return origin.add(direction.scale(crosshairRaySetback(player)));
+    }
+
+    /**
+     * Whether {@code mc.hitResult} carries a usable WORLD-space location this
+     * frame. A Sable plot-space hit (crosshair on a sublevel hull) doesn't —
+     * including one degraded to a MISS by reach filtering, which keeps the raw
+     * plot location. Compat hooks whose ray DIRECTION is derived from the hit
+     * (Create's BigOutlines via RaycastHelper) must stand down as a group on
+     * such frames: redirecting only origin and range pairs a camera origin
+     * with a body-ray direction — a hybrid ray corresponding to no gaze at
+     * all — and Create's own distance caps go astronomical on the raw
+     * location. Fully standing down leaves un-modded Create+Sable behavior.
+     */
+    public static boolean crosshairHitUsable() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.hitResult == null) {
+            return false;
+        }
+        return mc.hitResult.getLocation().distanceToSqr(mc.player.getEyePosition())
+                <= Mth.square(256.0f);
+    }
+
+    /**
+     * Called from {@link com.caleb.unlockedcamera.mixin.CreateChainConveyorMixin}:
+     * true squared distance from {@code reference} to the crosshair hit when
+     * its location is Sable plot-space. The handler seeds its occlusion
+     * tie-break with the hit's raw squared eye distance — astronomical for a
+     * plot-space hit, so its cull could never reject and chain points were
+     * selectable through the hull wall the crosshair rested on. The hit lies
+     * on the camera ray: recover the world-space point via the plot-space
+     * solve, then measure from {@code reference}. Null when recovery does not
+     * apply ({@code location} is not the current crosshair hit's own location
+     * object, aim inactive, or the solve degenerates) — callers keep the raw
+     * value.
+     */
+    public static Double plotAwareHitDistSqr(Vec3 location, Vec3 reference) {
+        Minecraft mc = Minecraft.getInstance();
+        if (!crosshairAimActive() || mc.player == null || mc.hitResult == null
+                || location != mc.hitResult.getLocation()) {
+            return null;
+        }
+        Camera camera = mc.gameRenderer.getMainCamera();
+        if (!camera.isInitialized()) {
+            return null;
+        }
+        Vector3f forward = camera.getLookVector();
+        Vec3 direction = new Vec3(forward.x(), forward.y(), forward.z());
+        Vec3 origin = camera.getPosition();
+        double playerDepth = Math.max(0.0, mc.player.getEyePosition().subtract(origin).dot(direction));
+        double t = plotSpaceAlongRay(mc.hitResult, origin, direction, mc.player, playerDepth);
+        if (t <= 0.0) {
+            return null;
+        }
+        return origin.add(direction.scale(t)).distanceToSqr(reference);
     }
 
 
@@ -1288,7 +1374,10 @@ public class UnlockedCameraClient {
             Vec3 from = camera.getPosition();
             Vec3 direction = new Vec3(-left.x(), -left.y(), -left.z()).scale(sign);
             Vec3 to = from.add(direction.scale(rawClearance + 0.1));
-            HitResult hit = mc.level.clip(new ClipContext(from, to, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, mc.player));
+            // Same bamboo transparency as the zoom cap, or stalks beside the
+            // shoulder yank the offset while walking a bamboo forest.
+            HitResult hit = cameraVisualClip(mc.level, from, to, mc.player,
+                    Mth.square(rawClearance + 0.1 + 2.0));
             if (hit.getType() != HitResult.Type.MISS) {
                 if (hit.getLocation().distanceToSqr(from) <= Mth.square(rawClearance + 0.1 + 2.0)) {
                     rawClearance = (float) Math.max(0.0, hit.getLocation().distanceTo(from) - 0.1);
@@ -1335,6 +1424,51 @@ public class UnlockedCameraClient {
     }
 
     /**
+     * VISUAL clip for the camera that treats bamboo as camera-transparent.
+     * Glass gets that from vanilla (empty visual shape), but bamboo's thin
+     * stalk still blocks the camera, so walking or orbiting in a bamboo forest
+     * snapped the zoom on every stalk a corner ray grazed. Walk the clip past
+     * bamboo hits the way gapWalkClip walks gap blocks — bounded, and never
+     * restarting from a Sable plot-space hit (re-clipping across half the
+     * world froze the game once already).
+     */
+    private static HitResult cameraVisualClip(BlockGetter level, Vec3 from, Vec3 to,
+            Entity entity, double maxHitSqr) {
+        Vec3 delta = to.subtract(from);
+        double length = delta.length();
+        if (length < 1.0E-7) {
+            return level.clip(new ClipContext(from, to, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, entity));
+        }
+        Vec3 direction = delta.scale(1.0 / length);
+        double startParam = 0.0;
+        HitResult hit;
+        for (int i = 0; ; i++) {
+            hit = level.clip(new ClipContext(
+                    from.add(direction.scale(startParam)), to,
+                    ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, entity));
+            if (i >= 8 || !(hit instanceof BlockHitResult blockHit)
+                    || hit.getType() != HitResult.Type.BLOCK
+                    || hit.getLocation().distanceToSqr(from) > maxHitSqr) {
+                break;
+            }
+            BlockState state = level.getBlockState(blockHit.getBlockPos());
+            if (!state.is(Blocks.BAMBOO) && !state.is(Blocks.BAMBOO_SAPLING)) {
+                break;
+            }
+            double exit = rayExitOfBlock(blockHit.getBlockPos(), from, direction);
+            if (exit <= startParam || !Double.isFinite(exit)) {
+                break;
+            }
+            if (exit >= length) {
+                // Only bamboo remains between here and the segment end.
+                return BlockHitResult.miss(to, blockHit.getDirection(), blockHit.getBlockPos());
+            }
+            startParam = exit + 1.0E-4;
+        }
+        return hit;
+    }
+
+    /**
      * Called from {@link com.caleb.unlockedcamera.mixin.CameraMixin} in place of
      * vanilla's {@code Camera#getMaxZoom} collision check. Returns null when the
      * unlocked camera is inactive so vanilla logic runs untouched.
@@ -1367,7 +1501,7 @@ public class UnlockedCameraClient {
                     position.x - forwards.x() * desired + ox,
                     position.y - forwards.y() * desired + oy,
                     position.z - forwards.z() * desired + oz);
-            HitResult hit = level.clip(new ClipContext(from, to, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, entity));
+            HitResult hit = cameraVisualClip(level, from, to, entity, maxHitSqr);
             if (hit.getType() != HitResult.Type.MISS) {
                 float d;
                 if (hit.getLocation().distanceToSqr(position) <= maxHitSqr) {

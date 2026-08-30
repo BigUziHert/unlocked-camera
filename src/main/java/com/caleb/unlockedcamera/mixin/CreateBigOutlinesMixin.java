@@ -4,7 +4,6 @@ import com.caleb.unlockedcamera.client.UnlockedCameraClient;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.core.Holder;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -17,8 +16,12 @@ import org.spongepowered.asm.mixin.injection.At;
  * hit with whatever big-outline block sits along the player's body direction —
  * e.g. grabbing the steering wheel while the crosshair is on the lever beside it.
  *
- * <p>Re-base it on the camera so it only claims blocks the crosshair is actually
- * over, extending its range by the camera setback to preserve reach.
+ * <p>Re-base it on the crosshair ray at the PLAYER'S depth (not the camera
+ * itself): BigOutlines traces the whole segment with no gap filter, so a
+ * camera origin let it claim big-outline blocks BEHIND the character — e.g.
+ * an ascending track at your back, whose empty collision shape never pulls
+ * the camera forward. From the depth point the raw reach is first-person
+ * reach, so no setback extension is needed either.
  *
  * <p>Applied only when Create is installed (see UnlockedCameraMixinPlugin).
  *
@@ -35,21 +38,18 @@ public abstract class CreateBigOutlinesMixin {
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;getEyePosition(F)Lnet/minecraft/world/phys/Vec3;"),
             require = 0)
     private static Vec3 unlockedcamera$bigOutlineOrigin(LocalPlayer player, float partialTick, Operation<Vec3> original) {
-        Vec3 overridden = UnlockedCameraClient.crosshairRayOrigin(player);
+        // Gated on the crosshair hit being world-usable so ALL of BigOutlines'
+        // redirected inputs degrade together: its direction comes from
+        // RaycastHelper.getTraceTarget (see CreateRaycastMixin), which falls
+        // back to the body ray on a Sable plot-space hitResult. Redirecting
+        // only the origin then pairs a crosshair origin with a body direction —
+        // a hybrid ray corresponding to no gaze — while Create's distance cap
+        // goes astronomical on the raw plot location and stops rejecting
+        // anything. Standing down entirely leaves un-modded Create+Sable
+        // behavior for that frame.
+        Vec3 overridden = UnlockedCameraClient.crosshairHitUsable()
+                ? UnlockedCameraClient.crosshairRayGapFreeOrigin(player)
+                : null;
         return overridden != null ? overridden : original.call(player, partialTick);
-    }
-
-    @WrapOperation(
-            method = "pick",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;getAttributeValue(Lnet/minecraft/core/Holder;)D"),
-            require = 0)
-    private static double unlockedcamera$bigOutlineRange(LocalPlayer player, Holder<?> attribute, Operation<Double> original) {
-        double value = original.call(player, attribute);
-        // Reach attributes only — see the honey glue mixin's range wrap.
-        if (attribute != net.minecraft.world.entity.ai.attributes.Attributes.BLOCK_INTERACTION_RANGE
-                && attribute != net.minecraft.world.entity.ai.attributes.Attributes.ENTITY_INTERACTION_RANGE) {
-            return value;
-        }
-        return value + UnlockedCameraClient.crosshairRaySetback(player);
     }
 }

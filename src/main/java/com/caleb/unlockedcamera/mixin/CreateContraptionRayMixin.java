@@ -13,8 +13,11 @@ import org.spongepowered.asm.mixin.injection.At;
  * Contraptions are entities with their own block-space, so Create raycasts them
  * itself from the player's eyes along the body rotation — which the shoulder
  * offset decouples from the crosshair. While the offset is engaged, substitute
- * the camera ray (origin at the camera, direction along it) so elevator floor
- * selection and clicking controls on contraptions match the crosshair exactly.
+ * the crosshair ray, starting at the PLAYER'S depth so the segment spans only
+ * what lies in front of the character — a full camera-to-target segment let a
+ * right-click reach contraption blocks behind the player (e.g. a stationary
+ * elevator wall at your back). Elevator floor selection and contraption
+ * controls then match the crosshair exactly.
  * Applied only when Create is installed (see UnlockedCameraMixinPlugin).
  *
  * <p>Enhancement-only, so require = 0: if a Create update moves these call
@@ -30,7 +33,7 @@ public abstract class CreateContraptionRayMixin {
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;getEyePosition()Lnet/minecraft/world/phys/Vec3;"),
             require = 0)
     private static Vec3 unlockedcamera$rayOrigin(LocalPlayer player, Operation<Vec3> original) {
-        Vec3 overridden = UnlockedCameraClient.contraptionRayOrigin(player);
+        Vec3 overridden = UnlockedCameraClient.crosshairRayGapFreeOrigin(player);
         return overridden != null ? overridden : original.call(player);
     }
 
