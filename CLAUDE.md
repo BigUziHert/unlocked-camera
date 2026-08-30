@@ -84,9 +84,18 @@ The 2026-08-30 review (at fbf1507) is fully absorbed too: all 18 confirmed
 findings fixed or deliberately documented above, SPEC-1 verified harmless
 against BTP 1.9.0, SPEC-2 hardened with a look-vector identity guard. Compat
 rays for Create start at the player's depth on the crosshair ray
-(crosshairRayGapFreeOrigin) with raw reach; hit-derived hooks stand down as a
-group on plot-space frames (crosshairHitUsable); incoming absolute-rotation
+(crosshairRayGapFreeOrigin) with raw reach; incoming absolute-rotation
 teleports that echo the held aim are restored (TeleportRotationMixin).
+
+Plot-space frames (crosshair anywhere on a ship) must RECOVER, never stand
+down: the review's "leave un-modded Create+Sable behavior" residual broke
+steering-wheel/throttle targeting on decks — the modpack's core interaction.
+Hit-derived Create hooks stay engaged via plotSpaceHitOnCameraRay +
+plotAwareHitDistSqr (crosshairHitUsable gates them together), and the
+entity-vs-block tie-break in cameraRayPick recovers plot-space ENTITY hits
+(item frames on ship walls) the same way — Sable resolves them inside
+getEntityHitResult, and its sublevel-aware HitResult#distanceTo lives on the
+base class, so it serves entity hits too.
 
 ## Process
 

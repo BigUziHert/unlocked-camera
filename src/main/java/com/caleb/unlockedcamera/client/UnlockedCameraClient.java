@@ -965,9 +965,25 @@ public class UnlockedCameraClient {
                 entity, sweepStart, entityEnd, searchBox,
                 target -> !target.isSpectator() && target.isPickable(), Mth.square(entitySearch));
 
-        return entityHit != null && entityHit.getLocation().distanceToSqr(origin) < blockGeomSqr
-                ? filterToPlayerRange(entityHit, entity, entityInteractionRange)
-                : filterToPlayerRange(blockHit, entity, blockInteractionRange);
+        // Entity-vs-block tie-break, both sides in camera-ray distances. An
+        // entity riding a sublevel (an item frame on a ship wall) comes back
+        // with a PLOT-space location — Sable resolves it correctly INSIDE
+        // getEntityHitResult, but raw location math out here made it lose to
+        // the recovered block distance every time, so the wall behind the
+        // frame ate the click. Recover its along-ray distance exactly like
+        // the block side does. (Sable's sublevel-aware HitResult#distanceTo
+        // is defined on the base class, so it serves entity hits too.)
+        if (entityHit != null) {
+            double entityGeomSqr = entityHit.getLocation().distanceToSqr(origin);
+            if (entityGeomSqr > Mth.square(maxRange + 2.0)) {
+                double t = plotSpaceAlongRay(entityHit, origin, direction, entity, playerDepth);
+                entityGeomSqr = t > 0.0 ? Mth.square(Math.min(t, maxRange)) : Double.MAX_VALUE;
+            }
+            if (entityGeomSqr < blockGeomSqr) {
+                return filterToPlayerRange(entityHit, entity, entityInteractionRange);
+            }
+        }
+        return filterToPlayerRange(blockHit, entity, blockInteractionRange);
     }
 
     /**
@@ -983,13 +999,50 @@ public class UnlockedCameraClient {
         if (!crosshairAimActive() || player != mc.player || mc.hitResult == null) {
             return null;
         }
-        Vec3 aim = mc.hitResult.getLocation().subtract(origin);
-        // Degenerate or plot-space (Sable sublevel) locations have no usable
-        // world direction; let Create aim its own ray.
-        if (aim.lengthSqr() < 1.0E-4 || aim.lengthSqr() > Mth.square(256.0f)) {
+        Vec3 hitLocation = mc.hitResult.getLocation();
+        if (hitLocation.distanceToSqr(origin) > Mth.square(256.0f)) {
+            // Sable plot-space location (crosshair anywhere on a ship).
+            // Standing down here turned Create's ray back into the body ray
+            // and killed steering-wheel/throttle targeting everywhere on a
+            // deck — their selection rides these rays. The hit still lies on
+            // the camera ray, so recover its world-space point and aim
+            // through that instead.
+            hitLocation = plotSpaceHitOnCameraRay();
+            if (hitLocation == null) {
+                return null;
+            }
+        }
+        Vec3 aim = hitLocation.subtract(origin);
+        // A degenerate direction (hit at the origin) has no ray to give.
+        if (aim.lengthSqr() < 1.0E-4) {
             return null;
         }
         return origin.add(aim.normalize().scale(range));
+    }
+
+    /**
+     * World-space point on the camera ray where the current plot-space
+     * {@code mc.hitResult} actually sits, via the plot-space solve — null when
+     * the camera isn't ready or the solve degenerates. (A reach-degraded MISS
+     * keeps the raw plot location but loses Sable's distance override; its
+     * astronomical solve just lands the point far along the ray — still the
+     * correct DIRECTION, which is all a MISS has to offer anyway.)
+     */
+    private static Vec3 plotSpaceHitOnCameraRay() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.hitResult == null) {
+            return null;
+        }
+        Camera camera = mc.gameRenderer.getMainCamera();
+        if (!camera.isInitialized()) {
+            return null;
+        }
+        Vector3f forward = camera.getLookVector();
+        Vec3 direction = new Vec3(forward.x(), forward.y(), forward.z());
+        Vec3 origin = camera.getPosition();
+        double playerDepth = Math.max(0.0, mc.player.getEyePosition().subtract(origin).dot(direction));
+        double t = plotSpaceAlongRay(mc.hitResult, origin, direction, mc.player, playerDepth);
+        return t > 0.0 ? origin.add(direction.scale(t)) : null;
     }
 
     /**
@@ -1071,57 +1124,47 @@ public class UnlockedCameraClient {
     }
 
     /**
-     * Whether {@code mc.hitResult} carries a usable WORLD-space location this
-     * frame. A Sable plot-space hit (crosshair on a sublevel hull) doesn't —
-     * including one degraded to a MISS by reach filtering, which keeps the raw
-     * plot location. Compat hooks whose ray DIRECTION is derived from the hit
-     * (Create's BigOutlines via RaycastHelper) must stand down as a group on
-     * such frames: redirecting only origin and range pairs a camera origin
-     * with a body-ray direction — a hybrid ray corresponding to no gaze at
-     * all — and Create's own distance caps go astronomical on the raw
-     * location. Fully standing down leaves un-modded Create+Sable behavior.
+     * Whether {@code mc.hitResult} can steer the hit-derived compat redirects
+     * this frame (Create's BigOutlines origin — its direction rides
+     * RaycastHelper). The hooks engage and stand down TOGETHER: redirecting
+     * only origin or only range pairs a camera origin with a body-ray
+     * direction — a hybrid ray corresponding to no gaze at all. A world-space
+     * location is directly usable; a Sable plot-space one is recovered onto
+     * the camera ray (see {@link #plotSpaceHitOnCameraRay}) — ship decks are
+     * plot-space on every frame, and fully standing down there killed
+     * steering-wheel/throttle targeting.
      */
     public static boolean crosshairHitUsable() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.hitResult == null) {
             return false;
         }
-        return mc.hitResult.getLocation().distanceToSqr(mc.player.getEyePosition())
-                <= Mth.square(256.0f);
+        if (mc.hitResult.getLocation().distanceToSqr(mc.player.getEyePosition())
+                <= Mth.square(256.0f)) {
+            return true;
+        }
+        return plotSpaceHitOnCameraRay() != null;
     }
 
     /**
-     * Called from {@link com.caleb.unlockedcamera.mixin.CreateChainConveyorMixin}:
-     * true squared distance from {@code reference} to the crosshair hit when
-     * its location is Sable plot-space. The handler seeds its occlusion
-     * tie-break with the hit's raw squared eye distance — astronomical for a
-     * plot-space hit, so its cull could never reject and chain points were
-     * selectable through the hull wall the crosshair rested on. The hit lies
-     * on the camera ray: recover the world-space point via the plot-space
-     * solve, then measure from {@code reference}. Null when recovery does not
-     * apply ({@code location} is not the current crosshair hit's own location
-     * object, aim inactive, or the solve degenerates) — callers keep the raw
-     * value.
+     * Called from the Create compat mixins (BigOutlines' range seed, the
+     * chain-conveyor occlusion seed): true squared distance from
+     * {@code reference} to the crosshair hit when its location is Sable
+     * plot-space. Those consumers seed distance caps/culls with the hit's raw
+     * squared distance — astronomical for a plot-space hit, so the cap never
+     * fires and blocks were claimable through the hull wall the crosshair
+     * rested on. Null when recovery does not apply ({@code location} is not
+     * the current crosshair hit's own location object, aim inactive, or the
+     * solve degenerates) — callers keep the raw value.
      */
     public static Double plotAwareHitDistSqr(Vec3 location, Vec3 reference) {
         Minecraft mc = Minecraft.getInstance();
-        if (!crosshairAimActive() || mc.player == null || mc.hitResult == null
+        if (!crosshairAimActive() || mc.hitResult == null
                 || location != mc.hitResult.getLocation()) {
             return null;
         }
-        Camera camera = mc.gameRenderer.getMainCamera();
-        if (!camera.isInitialized()) {
-            return null;
-        }
-        Vector3f forward = camera.getLookVector();
-        Vec3 direction = new Vec3(forward.x(), forward.y(), forward.z());
-        Vec3 origin = camera.getPosition();
-        double playerDepth = Math.max(0.0, mc.player.getEyePosition().subtract(origin).dot(direction));
-        double t = plotSpaceAlongRay(mc.hitResult, origin, direction, mc.player, playerDepth);
-        if (t <= 0.0) {
-            return null;
-        }
-        return origin.add(direction.scale(t)).distanceToSqr(reference);
+        Vec3 recovered = plotSpaceHitOnCameraRay();
+        return recovered != null ? recovered.distanceToSqr(reference) : null;
     }
 
 

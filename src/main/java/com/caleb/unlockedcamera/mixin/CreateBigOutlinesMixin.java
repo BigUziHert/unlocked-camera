@@ -4,6 +4,7 @@ import com.caleb.unlockedcamera.client.UnlockedCameraClient;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -38,18 +39,34 @@ public abstract class CreateBigOutlinesMixin {
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;getEyePosition(F)Lnet/minecraft/world/phys/Vec3;"),
             require = 0)
     private static Vec3 unlockedcamera$bigOutlineOrigin(LocalPlayer player, float partialTick, Operation<Vec3> original) {
-        // Gated on the crosshair hit being world-usable so ALL of BigOutlines'
-        // redirected inputs degrade together: its direction comes from
-        // RaycastHelper.getTraceTarget (see CreateRaycastMixin), which falls
-        // back to the body ray on a Sable plot-space hitResult. Redirecting
-        // only the origin then pairs a crosshair origin with a body direction —
-        // a hybrid ray corresponding to no gaze — while Create's distance cap
-        // goes astronomical on the raw plot location and stops rejecting
-        // anything. Standing down entirely leaves un-modded Create+Sable
-        // behavior for that frame.
+        // Gated on the same availability the direction hook has (see
+        // crosshairHitUsable — RaycastHelper's getTraceTarget recovers Sable
+        // plot-space hits onto the camera ray), so ALL of BigOutlines'
+        // redirected inputs engage and stand down together. Redirecting only
+        // one of them pairs a crosshair origin with a body direction — a
+        // hybrid ray corresponding to no gaze.
         Vec3 overridden = UnlockedCameraClient.crosshairHitUsable()
                 ? UnlockedCameraClient.crosshairRayGapFreeOrigin(player)
                 : null;
         return overridden != null ? overridden : original.call(player, partialTick);
+    }
+
+    @WrapOperation(
+            method = "pick",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/phys/Vec3;distanceToSqr(Lnet/minecraft/world/phys/Vec3;)D"),
+            require = 0)
+    private static double unlockedcamera$plotAwareRange(Vec3 location, Vec3 reference, Operation<Double> original) {
+        double raw = original.call(location, reference);
+        // BigOutlines caps its claims at the crosshair hit's distance —
+        // astronomical for a Sable plot-space location, which disarmed the cap
+        // (through-hull claims, and clicks near a steering wheel hijacked by
+        // its big shape). Recover the true distance for exactly the hit's own
+        // location object; the candidate-distance calls (world-space, near)
+        // pass through on the raw value.
+        if (raw <= Mth.square(256.0f)) {
+            return raw;
+        }
+        Double recovered = UnlockedCameraClient.plotAwareHitDistSqr(location, reference);
+        return recovered != null ? recovered : raw;
     }
 }
