@@ -80,6 +80,14 @@ ray sweeps entities; reach is eye-based for world hits (Sable's sublevel-aware
 HitResult#distanceTo only for plot-space hits); and config-slider gestures
 journal as one composite undo step covering every linked setting they pushed.
 
+The 2026-08-30 review (at fbf1507) is fully absorbed too: all 18 confirmed
+findings fixed or deliberately documented above, SPEC-1 verified harmless
+against BTP 1.9.0, SPEC-2 hardened with a look-vector identity guard. Compat
+rays for Create start at the player's depth on the crosshair ray
+(crosshairRayGapFreeOrigin) with raw reach; hit-derived hooks stand down as a
+group on plot-space frames (crosshairHitUsable); incoming absolute-rotation
+teleports that echo the held aim are restored (TeleportRotationMixin).
+
 ## Process
 
 Measure first: temporary logging pinned every hard bug here in one round after

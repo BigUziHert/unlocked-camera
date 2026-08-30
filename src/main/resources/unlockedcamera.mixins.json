@@ -24,6 +24,7 @@
     "SimulatedHoneyGlueMixin",
     "SimulatedPhysicsStaffMixin",
     "SimulatedPhysicsStaffRenderMixin",
-    "SimulatedSteeringWheelMixin"
+    "SimulatedSteeringWheelMixin",
+    "TeleportRotationMixin"
   ]
 }

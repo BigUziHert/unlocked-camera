@@ -127,6 +127,11 @@ public class UnlockedCameraClient {
                 UnlockedCameraClient::onInteractionKeyTriggered);
     }
 
+    /** The use key's state at the PREVIOUS tick's sample, read by the snap
+     * handler to tell a fresh right-click from held-button auto-repeat. */
+    private static boolean useKeyWasDownLastTick;
+    private static boolean useKeyDownSample;
+
     /**
      * Clicking during freelook while Keep Freelook Direction is on: snap the
      * player's body to where the freelook camera points (the view itself
@@ -146,6 +151,19 @@ public class UnlockedCameraClient {
         // Pick-block already follows the crosshair; middle-click shouldn't
         // commit the freelook direction.
         if (event.isPickBlock()) {
+            return;
+        }
+        // Not a per-click event: it re-fires every tick from continueAttack
+        // while left-click is held mining a block, and every ~4 ticks from the
+        // held right-click auto-repeat. Re-snapping on every firing chased the
+        // view in half-degree quanta — freelook degraded to normal look while
+        // mining, plus a full extra pick per tick. Only a fresh press commits
+        // the deflection: mining in progress means the attack press is old,
+        // and a use key already down last tick means auto-repeat.
+        if (event.isAttack() && mc.gameMode != null && mc.gameMode.isDestroying()) {
+            return;
+        }
+        if (event.isUseItem() && useKeyWasDownLastTick) {
             return;
         }
         if (Math.abs(freelookYaw) < 0.5f && Math.abs(freelookPitch) < 0.5f) {
@@ -202,6 +220,12 @@ public class UnlockedCameraClient {
             dropHeldAim();
             return;
         }
+
+        // Sampled every tick (before any later early return) for the
+        // keep-direction snap's fresh-press latch: the event handler compares
+        // against the PREVIOUS tick's sample.
+        useKeyWasDownLastTick = useKeyDownSample;
+        useKeyDownSample = mc.options.keyUse.isDown();
 
         // Always drain the swap-shoulder key so clicks don't queue up while the
         // camera is off; only act on them while it's on.
@@ -331,8 +355,19 @@ public class UnlockedCameraClient {
         // contraption-relative work per movement packet.
         // During freelook the aim is held with ANY item: the head visibly
         // tracks the deflected view for other players, and shots land true.
-        float[] freshAim = (holdingRangedItem(mc) || freelookDeflected(mc))
-                ? crosshairAimAngles() : null;
+        //
+        // Mounted on a vanilla vehicle, the hold narrows to the actual draw:
+        // steerable mounts copy the rider's server yaw onto their body every
+        // tick (tickRidden), so a merely-held bow twisted the horse toward the
+        // crosshair for OTHER players — invisible to the rider, whose client
+        // re-derives from its own rotation. Instant uses (pearls, snowballs)
+        // stay covered by the click-time UseItem rewrite, which the
+        // unconditional per-tick passenger rotation stream makes sufficient
+        // while mounted. (Sable seats never reach here — their path returned
+        // above.)
+        boolean holdWanted = (holdingRangedItem(mc) || freelookDeflected(mc))
+                && (!mc.player.isPassenger() || mc.player.isUsingItem());
+        float[] freshAim = holdWanted ? crosshairAimAngles() : null;
         boolean hadAim = cachedHeldAim != null;
         cachedHeldAim = freshAim;
         heldAimTicks++;
@@ -615,6 +650,27 @@ public class UnlockedCameraClient {
      */
     public static float[] continuousAimAngles() {
         return cachedHeldAim;
+    }
+
+    /**
+     * Called from {@link com.caleb.unlockedcamera.mixin.TeleportRotationMixin}:
+     * whether an incoming ABSOLUTE server rotation is just the held aim echoed
+     * back. While the hold is active the server's stored rotation IS the
+     * stamped aim, so rubber-band corrections return it instead of vanilla's
+     * effectively rotation-neutral value. The aim drifts well under a degree
+     * between stamps, so a one-degree window recognizes the echo; a deliberate
+     * server rotation landing inside it is indistinguishable from the aim
+     * anyway.
+     */
+    public static boolean isHeldAimEcho(float yaw, float pitch) {
+        for (float[] aim : new float[][] {cachedHeldAim, lastSentAim}) {
+            if (aim != null
+                    && Math.abs(Mth.wrapDegrees(yaw - aim[0])) < 1.0f
+                    && Math.abs(pitch - aim[1]) < 1.0f) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean holdingRangedItem(Minecraft mc) {
