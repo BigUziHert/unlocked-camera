@@ -8,6 +8,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.options.OptionsSubScreen;
 import net.minecraft.network.chat.Component;
@@ -19,6 +20,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
@@ -65,6 +67,20 @@ public abstract class ConfigScreenSliderMixin extends OptionsSubScreen {
     public void removed() {
         super.removed();
         LinkedOptionSlider.onScreenClosed();
+    }
+
+    /**
+     * Hover-arrow freshness: the options list culls fully off-screen rows, so a
+     * hovered slider that scrolls out of view stops rendering with its hovered
+     * flag frozen true — it would keep receiving hover-arrow keys invisibly.
+     * Clearing the target before the widgets render leaves it set only by
+     * sliders that actually drew this frame. (An @Inject, not an override:
+     * ConfigurationSectionScreen defines render itself.)
+     */
+    @Inject(method = "render", at = @At("HEAD"), remap = false)
+    private void unlockedcamera$frameStart(GuiGraphics guiGraphics, int mouseX, int mouseY,
+            float partialTick, CallbackInfo ci) {
+        LinkedOptionSlider.onFrameStart();
     }
 
     @Shadow(remap = false)

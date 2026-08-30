@@ -59,6 +59,21 @@ approval.
 - Entering the camera starts at vanilla's 4-block distance and glides to the
   configured zoom (even when min zoom > 4): Caleb prefers the seamless F5
   transition over an instant jump-cut. (Caleb's explicit call, 2026-08-26.)
+- Keybind defaults stay LEFT_ALT (freelook) and X (swap shoulder) despite the
+  Create/vanilla overlaps: Create's toolbox radial opens on raw LEFT_ALT only
+  with a toolbox in range (server config toolboxRange, default 10) and its
+  screen stands freelook down automatically — deliberate coexistence. (Caleb,
+  2026-08-30.)
+- Known limitation, document-only: with super glue in the OFFHAND, Create
+  validates block placement server-side along the eye/body ray
+  (SuperGlueHandler.glueInOffHandAppliesOnBlockPlace), and ServerboundUseItemOn
+  carries no rotation — shoulder-camera placements near block boundaries can
+  ghost/revert or place without glue. Main-hand glue placement is covered.
+  (Caleb chose not to mixin Create's server side, 2026-08-30.)
+- Entity-scale convention is SCALE-RELATIVE (vanilla's): configured distances
+  mean blocks at normal size and scale with generic.scale; the collision-cap
+  seeds and the shoulder move/clearance multiply by cameraEntityScale to cross
+  into world-space geometry. (Caleb, 2026-08-30.)
 
 All findings from the 2026-08-26 external code review are resolved: the aim
 ray sweeps entities; reach is eye-based for world hits (Sable's sublevel-aware

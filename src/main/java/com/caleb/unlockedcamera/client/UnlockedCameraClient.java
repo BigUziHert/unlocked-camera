@@ -18,6 +18,7 @@ import net.minecraft.world.item.ProjectileItem;
 import net.minecraft.util.Mth;
 import net.minecraft.util.SmoothDouble;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
 import net.minecraft.world.item.UseAnim;
 import net.minecraft.world.level.BlockGetter;
@@ -33,7 +34,9 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
+import net.neoforged.neoforge.client.ClientHooks;
 import net.neoforged.neoforge.client.event.CalculateDetachedCameraDistanceEvent;
+import net.neoforged.neoforge.client.event.CalculatePlayerTurnEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
@@ -113,7 +116,13 @@ public class UnlockedCameraClient {
         NeoForge.EVENT_BUS.addListener(EventPriority.LOW, UnlockedCameraClient::onMouseScroll);
         NeoForge.EVENT_BUS.addListener(UnlockedCameraClient::onCameraDistance);
         NeoForge.EVENT_BUS.addListener(UnlockedCameraClient::onComputeCameraAngles);
-        NeoForge.EVENT_BUS.addListener(UnlockedCameraClient::onInteractionKeyTriggered);
+        // receiveCanceled: Create cancels this event for its own click claims
+        // (contraption controls, curved tracks). The keep-direction snap must
+        // still commit the freelook deflection on those clicks — the
+        // interaction itself already happened where the player looked.
+        NeoForge.EVENT_BUS.addListener(EventPriority.NORMAL, true,
+                InputEvent.InteractionKeyMappingTriggered.class,
+                UnlockedCameraClient::onInteractionKeyTriggered);
     }
 
     /**
@@ -232,6 +241,12 @@ public class UnlockedCameraClient {
         // spectator menu instead of being swallowed as zoom.
         if (mc.player.isSpectator()) {
             active = false;
+            // Going spectator while seated dismounts server-side without a
+            // normal dismount tick, so a pending seat resume would survive all
+            // of spectator and force a camera switch on exit — minutes or
+            // hours later. Kill it like the master-off path does.
+            resumeAfterSeat = false;
+            lastSeatCameraType = null;
             dropHeldAim();
             return;
         }
@@ -269,7 +284,7 @@ public class UnlockedCameraClient {
                     // Resume the way F5 enters: start at vanilla's distance and
                     // glide out to the pre-seat zoom instead of snapping there.
                     smoothedDistance = VANILLA_DISTANCE;
-                    collisionCap = VANILLA_DISTANCE;
+                    collisionCap = VANILLA_DISTANCE * cameraEntityScale(mc.player);
                 }
                 lastSeatCameraType = null;
             }
@@ -696,6 +711,17 @@ public class UnlockedCameraClient {
         event.setDistance(smoothedDistance);
     }
 
+    /**
+     * Vanilla scales every third-person camera distance by the entity's
+     * generic.scale attribute, and this mod keeps that convention: configured
+     * distances mean blocks at normal size. The factor is needed wherever the
+     * scale-relative model meets real world-space geometry — the collision
+     * cap's seeds and the shoulder move/clearance.
+     */
+    private static float cameraEntityScale(Entity entity) {
+        return entity instanceof LivingEntity living ? living.getScale() : 1.0f;
+    }
+
     private static void enterCamera(Minecraft mc) {
         active = true;
         setCameraType(mc, CameraType.THIRD_PERSON_BACK);
@@ -704,7 +730,10 @@ public class UnlockedCameraClient {
         // camera glides out to it from here (settled by design).
         smoothedDistance = VANILLA_DISTANCE;
         lastFrameNanos = 0L;
-        collisionCap = VANILLA_DISTANCE;
+        // The cap lives in getMaxZoom's POST-entity-scale space (smoothedDistance
+        // is pre-scale by the event contract); seeding it unscaled made a
+        // scaled-up player enter at half vanilla's distance and glide wrong.
+        collisionCap = VANILLA_DISTANCE * cameraEntityScale(mc.player);
         lastCapNanos = 0L;
         shoulderOffset = 0.0f;
         shoulderClearance = ClientConfig.shoulderOffsetAmount();
@@ -1113,12 +1142,17 @@ public class UnlockedCameraClient {
 
         // Vanilla's sensitivity curve (MouseHandler#turnPlayer), including the 0.15
         // factor Entity#turn applies and the cinematic-camera smoothing, so
-        // freelook feels identical to normal look.
-        double d = mc.options.sensitivity().get() * 0.6 + 0.2;
+        // freelook feels identical to normal look. Cancelling turnPlayer at HEAD
+        // also skips its CalculatePlayerTurnEvent — the event's only call site —
+        // so post it here: a mod adjusting sensitivity or forcing cinematic
+        // through it must apply to freelook too.
+        CalculatePlayerTurnEvent turnEvent = ClientHooks.getTurnPlayerValues(
+                mc.options.sensitivity().get(), mc.options.smoothCamera);
+        double d = turnEvent.getMouseSensitivity() * 0.6 + 0.2;
         double cubed = d * d * d;
         double dx;
         double dy;
-        if (mc.options.smoothCamera) {
+        if (turnEvent.getCinematicCameraEnabled()) {
             double scaled = cubed * 8.0;
             dx = freelookSmoothX.getNewDeltaValue(accumulatedDX * scaled, movementTime * scaled);
             dy = freelookSmoothY.getNewDeltaValue(accumulatedDY * scaled, movementTime * scaled);
@@ -1219,6 +1253,11 @@ public class UnlockedCameraClient {
         float deltaSeconds = lastShoulderNanos == 0 ? 0.0f : (now - lastShoulderNanos) / 1_000_000_000.0f;
         lastShoulderNanos = now;
 
+        // The zoom gate compares pre-scale distances (both sides scale-relative);
+        // the sideways move and its clearance ray are real world-space blocks, so
+        // they carry the entity scale — a half-size character gets a half-size
+        // shoulder slide, keeping the framing proportional at any size.
+        float entityScale = cameraEntityScale(camera.getEntity());
         float target = 0.0f;
         if (ClientConfig.shoulderOffsetEnabled()) {
             // Gate on the zoom the player has chosen (targetDistance), not the
@@ -1226,7 +1265,7 @@ public class UnlockedCameraClient {
             // through close distances and walls push the camera in, and neither
             // should flash the offset on.
             float fade = Mth.clamp(ClientConfig.shoulderOffsetMaxZoom() + 1.0f - targetDistance, 0.0f, 1.0f);
-            target = shoulderSide * ClientConfig.shoulderOffsetAmount() * fade;
+            target = shoulderSide * ClientConfig.shoulderOffsetAmount() * entityScale * fade;
         }
 
         float blend = 1.0f - (float) Math.exp(-deltaSeconds * SHOULDER_SPEED);
@@ -1243,7 +1282,7 @@ public class UnlockedCameraClient {
         // dx runs along camera-local +X, which is camera-RIGHT (the left vector is
         // -X), so positive offsets travel opposite to it.
         float sign = shoulderOffset == 0.0f ? shoulderSide : Math.signum(shoulderOffset);
-        float rawClearance = ClientConfig.shoulderOffsetAmount();
+        float rawClearance = ClientConfig.shoulderOffsetAmount() * entityScale;
         if (mc.level != null) {
             Vector3f left = camera.getLeftVector();
             Vec3 from = camera.getPosition();

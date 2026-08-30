@@ -30,6 +30,12 @@ public abstract class MouseHandlerMixin {
      * cinematic-camera smoothers are reset too — freelook runs its own, and a
      * pan mid-smoothing when freelook engages would otherwise sit frozen in
      * vanilla's and flush its remainder into the first turn after release.
+     *
+     * <p>Better Third Person hooks this method too (HEAD + TAIL, non-cancellable,
+     * mixin priority -1000 — verified against BTP 1.9.0): our cancel runs first
+     * and skips its turn bookkeeping along with the rest of the method, which is
+     * correct while freelook holds — the player isn't turning. BTP cannot starve
+     * this cancel in return, since its own injects can't cancel.
      */
     @Inject(method = "turnPlayer", at = @At("HEAD"), cancellable = true)
     private void unlockedcamera$freelook(double movementTime, CallbackInfo ci) {

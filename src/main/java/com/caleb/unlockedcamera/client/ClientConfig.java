@@ -102,7 +102,7 @@ public final class ClientConfig {
     }
 
     static float shoulderOffsetMaxZoom() {
-        return SHOULDER_OFFSET_MAX_ZOOM.get().floatValue();
+        return finite(SHOULDER_OFFSET_MAX_ZOOM);
     }
 
     static boolean disableVanillaThirdPerson() {
@@ -110,19 +110,31 @@ public final class ClientConfig {
     }
 
     static float shoulderOffsetAmount() {
-        return SHOULDER_OFFSET_AMOUNT.get().floatValue();
+        return finite(SHOULDER_OFFSET_AMOUNT);
     }
 
     static float minZoom() {
-        return MIN_ZOOM.get().floatValue();
+        return finite(MIN_ZOOM);
     }
 
     static float maxZoom() {
         // Guard against a hand-edited config where max ends up below min.
-        return Math.max(MAX_ZOOM.get().floatValue(), minZoom());
+        return Math.max(finite(MAX_ZOOM), minZoom());
     }
 
     static float freelookYawLimit() {
-        return FREELOOK_YAW_LIMIT.get().floatValue();
+        return finite(FREELOOK_YAW_LIMIT);
+    }
+
+    /**
+     * A hand-edited {@code nan} is valid TOML and slips through NeoForge's
+     * range correction (every NaN comparison is false), then poisons each
+     * lerp/clamp downstream — camera position included — and can even reach
+     * outgoing rotation packets. Sanitize every numeric getter at this one
+     * choke point instead.
+     */
+    private static float finite(ModConfigSpec.DoubleValue value) {
+        double current = value.get();
+        return (float) (Double.isFinite(current) ? current : value.getDefault());
     }
 }

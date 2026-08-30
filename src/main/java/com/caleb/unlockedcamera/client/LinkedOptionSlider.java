@@ -163,15 +163,23 @@ public final class LinkedOptionSlider extends AbstractOptionSliderButton {
      * Routes an arrow key to the slider under the mouse — hovering is enough,
      * no click-to-focus needed. A hovered slider wins over a focused one; with
      * nothing hovered, the focused slider gets the key through the screen's
-     * normal path. Called from the screen's keyPressed override. Freshness
-     * comes from hover tracking itself (cleared on un-hover and screen close),
-     * not a frame-time window — which broke down below 10 fps.
+     * normal path. Called from the screen's keyPressed override. Freshness:
+     * the static is cleared at the top of every screen frame and re-set only
+     * by a slider that actually rendered hovered — a row the list culled
+     * (scrolled out of view) freezes with its hovered flag stuck true and
+     * neither renders nor un-hovers, so only a per-frame reset can stop it
+     * from silently eating arrow keys forever.
      */
     public static boolean hoverArrowKey(int keyCode, int scanCode, int modifiers) {
         LinkedOptionSlider target = hovered;
         return (keyCode == GLFW.GLFW_KEY_LEFT || keyCode == GLFW.GLFW_KEY_RIGHT)
                 && target != null && target.isHovered()
                 && target.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    /** Called at the head of every screen render — see {@link #hoverArrowKey}. */
+    public static void onFrameStart() {
+        hovered = null;
     }
 
     /** Close every gesture still open — see {@link #openGestures}. */
@@ -218,8 +226,6 @@ public final class LinkedOptionSlider extends AbstractOptionSliderButton {
         super.renderWidget(guiGraphics, mouseX, mouseY, partialTick);
         if (isHovered()) {
             hovered = this;
-        } else if (hovered == this) {
-            hovered = null;
         }
         // The release landed off the widget (positional mouseReleased routing
         // never calls onRelease then): close the gesture as soon as the

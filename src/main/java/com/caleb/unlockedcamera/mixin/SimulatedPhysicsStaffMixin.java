@@ -3,6 +3,7 @@ package com.caleb.unlockedcamera.mixin;
 import com.caleb.unlockedcamera.client.UnlockedCameraClient;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
@@ -43,6 +44,16 @@ public abstract class SimulatedPhysicsStaffMixin {
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/phys/Vec3;scale(D)Lnet/minecraft/world/phys/Vec3;"),
             require = 0)
     private Vec3 unlockedcamera$staffDragTarget(Vec3 lookAngle, double distance, Operation<Vec3> original) {
+        // Identity guard: with no ordinal or slice this wraps EVERY Vec3.scale(D)
+        // in the method, and require = 0 would hide the mismatch if a Simulated
+        // update added another. Only substitute when the receiver really is the
+        // player's unit look vector (today's single call site).
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null
+                || Math.abs(lookAngle.lengthSqr() - 1.0) > 1.0E-3
+                || lookAngle.dot(mc.player.getLookAngle()) < 0.999) {
+            return original.call(lookAngle, distance);
+        }
         Vec3 overridden = UnlockedCameraClient.crosshairOffsetFromEye(distance);
         return overridden != null ? overridden : original.call(lookAngle, distance);
     }

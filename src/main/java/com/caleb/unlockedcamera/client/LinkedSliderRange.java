@@ -49,8 +49,16 @@ public record LinkedSliderRange(OptionInstance.IntRange delegate,
 
     @Override
     public Optional<Integer> validateValue(Integer value) {
-        return delegate.validateValue(
-                Mth.clamp(value, liveMin.getAsInt(), liveMax.getAsInt()));
+        // Order and bound the fences before clamping: a hand-inverted zoom pair
+        // in the TOML (minZoom > maxZoom) flips liveMin above liveMax, and a raw
+        // clamp then collapses every input to liveMax — the row lies about the
+        // stored value and a bare click commits the rewrite. pinKnob already
+        // orders its bounds the same way.
+        int lo = Math.min(liveMin.getAsInt(), liveMax.getAsInt());
+        int hi = Math.max(liveMin.getAsInt(), liveMax.getAsInt());
+        lo = Mth.clamp(lo, delegate.minInclusive(), delegate.maxInclusive());
+        hi = Mth.clamp(hi, delegate.minInclusive(), delegate.maxInclusive());
+        return delegate.validateValue(Mth.clamp(value, lo, hi));
     }
 
     @Override
