@@ -28,6 +28,9 @@ public class UnlockedCameraMixinPlugin implements IMixinConfigPlugin {
         if (mixinClassName.contains(".Create")) {
             return LoadingModList.get().getModFileById("create") != null;
         }
+        if (mixinClassName.contains(".Tacz")) {
+            return LoadingModList.get().getModFileById("tacz") != null;
+        }
         return true;
     }
 

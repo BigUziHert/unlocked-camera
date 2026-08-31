@@ -97,6 +97,23 @@ entity-vs-block tie-break in cameraRayPick recovers plot-space ENTITY hits
 getEntityHitResult, and its sublevel-aware HitResult#distanceTo lives on the
 base class, so it serves entity hits too.
 
+## TACZ (Timeless and Classics Zero) compat
+
+Two mechanisms, both verified against the installed jar
+(tacz-neoforge-1.21.1-1.1.8-hotfix-r6):
+
+- Guns need the aim hold for the same reason a bow release does:
+  ClientMessagePlayerShoot carries NO rotation, and the server handler fires
+  along serverPlayer::getXRot/::getYRot. Guns are UseAnim.NONE and not
+  ProjectileItem, so holdingRangedItem recognizes them via TaczCompat's
+  reflective IGun check (AbstractGunItem implements IGun).
+- With a gun in the main hand TACZ cancels the vanilla crosshair layer and
+  draws its own reticle, which bails in third person unless
+  ShoulderSurfingCompat.showCrosshair() vouches for it. TaczCrosshairMixin
+  answers through that seam (their own third-person-camera hook) so the gun's
+  real reticle draws whenever our crosshair would — do not paste a vanilla
+  crosshair over it instead.
+
 ## Process
 
 Measure first: temporary logging pinned every hard bug here in one round after

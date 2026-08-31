@@ -681,7 +681,12 @@ public class UnlockedCameraClient {
                     || stack.getItem() instanceof ProjectileItem
                     // EnderpearlItem does NOT implement ProjectileItem in
                     // 1.21.1 — this clause alone enables the hold for pearls.
-                    || stack.getItem() instanceof EnderpearlItem) {
+                    || stack.getItem() instanceof EnderpearlItem
+                    // TACZ guns: UseAnim.NONE and not ProjectileItem, but their
+                    // shoot packet carries no rotation — the server fires along
+                    // the rotation it last heard, so the hold is what lands the
+                    // shot on the crosshair.
+                    || TaczCompat.isGun(stack)) {
                 return true;
             }
         }
@@ -813,6 +818,19 @@ public class UnlockedCameraClient {
     public static boolean shouldForceCrosshair() {
         return active && (ClientConfig.crosshairAlways()
                 || (ClientConfig.crosshairOnShoulderOffset() && shoulderEngaged()));
+    }
+
+    /**
+     * Called from {@link com.caleb.unlockedcamera.mixin.TaczCrosshairMixin}:
+     * whether TACZ should draw its own gun reticle even though the camera isn't
+     * first person. TACZ cancels the vanilla crosshair layer outright while a
+     * gun is held and draws its reticle instead, but suppresses that reticle in
+     * third person unless a shoulder-camera mod vouches for it — so with a gun
+     * in hand our forced crosshair produced NO crosshair at all. Answer through
+     * their own compat seam, on exactly the condition our own crosshair uses.
+     */
+    public static boolean taczShouldShowCrosshair() {
+        return shouldForceCrosshair();
     }
 
     /**

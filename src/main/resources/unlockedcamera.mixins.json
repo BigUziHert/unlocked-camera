@@ -25,6 +25,7 @@
     "SimulatedPhysicsStaffMixin",
     "SimulatedPhysicsStaffRenderMixin",
     "SimulatedSteeringWheelMixin",
+    "TaczCrosshairMixin",
     "TeleportRotationMixin"
   ]
 }
