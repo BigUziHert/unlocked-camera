@@ -67,7 +67,7 @@ approval.
    a one-frame-stale outline beats jittering ship outlines.
 9. Teleport echo restore (TeleportRotationMixin) matches incoming absolute
    rotations against a bounded history of aims ACTUALLY transmitted (every
-   rewrite and tick send calls recordTransmittedAim; 64 entries / 5 s;
+   rewrite and tick send calls recordTransmittedAim; 128 entries / 5 s;
    reset per LocalPlayer instance so a respawn rotation always applies).
    Capture and restore happen only on the client thread — handleMovePlayer
    is entered first on netty, where ensureRunningOnSameThread re-schedules
