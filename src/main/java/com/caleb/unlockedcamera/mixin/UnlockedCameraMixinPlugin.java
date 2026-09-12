@@ -31,6 +31,9 @@ public class UnlockedCameraMixinPlugin implements IMixinConfigPlugin {
         if (mixinClassName.contains(".Tacz")) {
             return LoadingModList.get().getModFileById("tacz") != null;
         }
+        if (mixinClassName.contains(".PingWheel")) {
+            return LoadingModList.get().getModFileById("pingwheel") != null;
+        }
         return true;
     }
 

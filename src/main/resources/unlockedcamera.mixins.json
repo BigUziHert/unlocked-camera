@@ -21,6 +21,8 @@
     "GameRendererMixin",
     "GuiMixin",
     "MouseHandlerMixin",
+    "PingWheelPingMixin",
+    "PingWheelRaycastMixin",
     "SimulatedHoneyGlueMixin",
     "SimulatedPhysicsStaffMixin",
     "SimulatedPhysicsStaffRenderMixin",

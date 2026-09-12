@@ -114,6 +114,17 @@ Two mechanisms, both verified against the installed jar
   real reticle draws whenever our crosshair would — do not paste a vanilla
   crosshair over it instead.
 
+## Ping Wheel compat
+
+Verified against Ping-Wheel-1.12.2-neoforge-1.21.1: pings raycast from the
+camera entity's eye along its view vector (PingController.performPingAction
+-> Raycast.traceDirectional, plus the Distant Horizons traceDistantAsync
+fallback). PingWheelPingMixin redirects the direction, PingWheelRaycastMixin
+the origin (crosshairRayGapFreeOrigin — raw range stays first-person reach,
+nothing in the camera-player gap is pingable) and the entity search box's
+separate view-vector read. Ping Wheel's own Sable projection runs after the
+redirected ray, untouched.
+
 ## Process
 
 Measure first: temporary logging pinned every hard bug here in one round after
