@@ -5,6 +5,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
+import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.world.entity.RelativeMovement;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -29,7 +30,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * The position correction is untouched, the teleport confirm has already gone
  * out (server state is unchanged by the restore), and the next tick's hold
  * re-stamps the server — exactly the drop-and-re-stamp pattern the hold
- * already uses.
+ * already uses. An echo can also land AFTER the hold stood down (the
+ * correction was in flight while the true rotation went out, and the server
+ * ignores movement while it awaits the teleport confirm): with no hold left
+ * to re-stamp, the restore is followed by one explicit send of the restored
+ * rotation, or client and server would disagree until the body next turned
+ * and an instant use would fire along the stale server rotation.
  *
  * <p>Thread discipline: handleMovePlayer is first entered on the netty thread,
  * where {@code ensureRunningOnSameThread} re-schedules it onto the client
@@ -86,5 +92,13 @@ public abstract class TeleportRotationMixin {
         player.setXRot(unlockedcamera$preXRot);
         player.yRotO = unlockedcamera$preYRotO;
         player.xRotO = unlockedcamera$preXRotO;
+        if (UnlockedCameraClient.continuousAimAngles() == null && mc.getConnection() != null) {
+            // No hold running to re-stamp the server: vanilla's confirm PosRot
+            // just carried the echoed aim back up, so tell it the rotation the
+            // client actually shows. (With a hold live, this send would only
+            // be rewritten to the aim the next tick re-stamps anyway.)
+            mc.getConnection().send(new ServerboundMovePlayerPacket.Rot(
+                    unlockedcamera$preYRot, unlockedcamera$preXRot, player.onGround()));
+        }
     }
 }

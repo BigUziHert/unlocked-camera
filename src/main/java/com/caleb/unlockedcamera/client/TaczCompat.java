@@ -62,6 +62,13 @@ final class TaczCompat {
      * or a shot just went off (burst/auto follow-ups are still coming). False
      * with no gun in the main hand, without TACZ, or if its operator API
      * cannot be reached. Cheap: a cast and a few field reads.
+     *
+     * <p>Main hand only, deliberately: {@code holdingRangedItem} accepts a gun
+     * in either hand (a mere hold is harmless on foot), but TACZ only ever
+     * operates the main-hand gun, so an offhand gun cannot be "drawn" and a
+     * mounted rider with one gets no hold. Note ADS is a toggle in TACZ's
+     * toggle-aim option: the mount follows the crosshair for as long as it
+     * stays toggled, consistent with "aiming down sights is the draw".
      */
     static boolean isGunEngaged(LocalPlayer player) {
         if (!initialized) {

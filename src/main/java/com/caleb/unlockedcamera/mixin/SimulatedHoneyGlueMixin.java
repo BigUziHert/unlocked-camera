@@ -26,11 +26,31 @@ import org.spongepowered.asm.mixin.injection.At;
 @Mixin(targets = "dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueClientHandler", remap = false)
 public abstract class SimulatedHoneyGlueMixin {
     @WrapOperation(
-            method = {"getHitResult", "updateHovered"},
+            method = "getHitResult",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getEyePosition()Lnet/minecraft/world/phys/Vec3;"),
             require = 0)
     private Vec3 unlockedcamera$glueRayOrigin(Player player, Operation<Vec3> original) {
         Vec3 overridden = UnlockedCameraClient.crosshairRayOrigin(player);
+        return overridden != null ? overridden : original.call(player);
+    }
+
+    /**
+     * updateHovered has no view-vector read of its own: its direction comes
+     * entirely from Create's RaycastHelper (redirected by CreateRaycastMixin
+     * through the current crosshair hit), which stands down when that hit is
+     * unusable (no pick yet, a degenerate plot-space solve). Gate the origin
+     * and the range below on the same availability, exactly like BigOutlines,
+     * so the hover never becomes a camera origin paired with a body-look
+     * direction — a hybrid ray corresponding to no gaze.
+     */
+    @WrapOperation(
+            method = "updateHovered",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getEyePosition()Lnet/minecraft/world/phys/Vec3;"),
+            require = 0)
+    private Vec3 unlockedcamera$hoverRayOrigin(Player player, Operation<Vec3> original) {
+        Vec3 overridden = UnlockedCameraClient.crosshairHitUsable()
+                ? UnlockedCameraClient.crosshairRayOrigin(player)
+                : null;
         return overridden != null ? overridden : original.call(player);
     }
 
@@ -86,6 +106,9 @@ public abstract class SimulatedHoneyGlueMixin {
             at = @At(value = "INVOKE", target = "Lcom/simibubi/create/foundation/utility/RaycastHelper;getTraceTarget(Lnet/minecraft/world/entity/player/Player;DLnet/minecraft/world/phys/Vec3;)Lnet/minecraft/world/phys/Vec3;"),
             require = 0)
     private Vec3 unlockedcamera$hoverRayRange(Player player, double range, Vec3 origin, Operation<Vec3> original) {
+        if (!UnlockedCameraClient.crosshairHitUsable()) {
+            return original.call(player, range, origin);
+        }
         return original.call(player, range + UnlockedCameraClient.crosshairRaySetback(player), origin);
     }
 }

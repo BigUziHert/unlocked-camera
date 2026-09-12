@@ -593,14 +593,17 @@ public class UnlockedCameraClient {
                 // sublevel's frame, so the location AND the entity's bounding
                 // box come back in far-away plot space. Subtracting the
                 // world-space eye from either is garbage — recover the true
-                // along-ray point exactly like the block hit above, and nudge
-                // INTO the entity along the ray instead of toward a centre
-                // that lives in another coordinate frame. The sweep's own
-                // occlusion bound (entitySearch, already recovered) still
-                // holds: Sable measured the sweep's distances sublevel-aware.
+                // along-ray point exactly like the block hit above. No
+                // centre nudge here: the centre lives in another coordinate
+                // frame, and a nudge ALONG the ray would not change the eye
+                // angle anyway (the eye sits only a shoulder-width off the
+                // ray), so the anti-graze margin is simply unavailable for
+                // sublevel entities. The sweep's own occlusion bound
+                // (entitySearch, already recovered) still holds: Sable
+                // measured the sweep's distances sublevel-aware.
                 double t = plotSpaceAlongRay(entityAim, origin, direction, mc.player, playerDepth);
                 entityPoint = t > 0.0
-                        ? origin.add(direction.scale(Math.min(t + 0.2, entitySearch)))
+                        ? origin.add(direction.scale(Math.min(t, entitySearch)))
                         : null; // degenerate solve: measurement noise, keep the block aim
             } else {
                 // Nudge toward the entity's centre so spread can't graze past.
@@ -688,7 +691,11 @@ public class UnlockedCameraClient {
      * Cached once per tick by the tick handler; packet rewrites read it free.
      */
     public static float[] continuousAimAngles() {
-        return cachedHeldAim;
+        // Packet handlers drain BEFORE the tick handler: after a respawn the
+        // new player's very first position packet answers with a PosRot
+        // while the cache still holds the old player's aim. Never stamp a
+        // player the cache was not computed for.
+        return Minecraft.getInstance().player == trackedPlayer ? cachedHeldAim : null;
     }
 
     /** The LocalPlayer the aim history belongs to; a new instance resets it. */
@@ -758,6 +765,21 @@ public class UnlockedCameraClient {
         if (player == null || player != trackedPlayer) {
             return false;
         }
+        // A live hold first, with no age bound: the server's stored rotation
+        // is the current or last-sent aim for as long as the hold runs, and
+        // it never ages out server-side — a rider standing still stamps once
+        // and then sends nothing for minutes (no movement packet leaves an
+        // unmoving, unturning player), yet a later correction still echoes
+        // exactly that stamp.
+        for (float[] aim : new float[][] {cachedHeldAim, lastSentAim}) {
+            if (aim != null
+                    && Math.abs(Mth.wrapDegrees(yaw - aim[0])) < 1.0f
+                    && Math.abs(pitch - aim[1]) < 1.0f) {
+                return true;
+            }
+        }
+        // Then the transmitted history, for corrections in flight while the
+        // player turned (or while the hold was standing down).
         long now = System.nanoTime();
         for (int i = 1; i <= aimHistoryCount; i++) {
             int slot = Math.floorMod(aimHistoryNext - i, AIM_HISTORY_SIZE);

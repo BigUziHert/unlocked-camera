@@ -137,57 +137,59 @@ public abstract class ConfigScreenSliderMixin extends OptionsSubScreen {
                 () -> (int) Math.round(ClientConfig.MAX_ZOOM.get() / step);
         java.util.function.IntSupplier thresholdScaled =
                 () -> (int) Math.round(ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.get() / step);
+        java.util.function.IntToDoubleFunction toConfig = v -> unlockedcamera$stepped(v, step);
+        // onDragValue receives the own value the config will hold after the
+        // apply (raw when the knob sits on its stored step, the exact stepped
+        // decimal otherwise), so a push never carries a sibling past it.
         OptionInstance.ValueSet<Integer> valueSet = switch (key) {
             case "minZoom" -> {
                 java.util.List<LinkedSliderRange.Linked> links = java.util.List.of(
-                        new LinkedSliderRange.Linked("maxZoom", maxScaled,
+                        new LinkedSliderRange.Linked("maxZoom",
                                 ClientConfig.MAX_ZOOM::get, ClientConfig.MAX_ZOOM::set),
-                        new LinkedSliderRange.Linked("shoulderOffsetMaxZoom", thresholdScaled,
+                        new LinkedSliderRange.Linked("shoulderOffsetMaxZoom",
                                 ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::get, ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::set));
-                yield new LinkedSliderRange(intRange, minScaled, ClientConfig.MIN_ZOOM::get,
+                yield new LinkedSliderRange(intRange, minScaled, ClientConfig.MIN_ZOOM::get, toConfig,
                         () -> scaledMin, () -> scaledMax, links,
-                        v -> {
-                            double dragged = v * step;
-                            if (dragged > ClientConfig.MAX_ZOOM.get()) {
-                                ClientConfig.MAX_ZOOM.set(dragged);
+                        ownAfter -> {
+                            if (ownAfter > ClientConfig.MAX_ZOOM.get()) {
+                                ClientConfig.MAX_ZOOM.set(ownAfter);
                             }
-                            if (dragged > ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.get()) {
-                                ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.set(dragged);
+                            if (ownAfter > ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.get()) {
+                                ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.set(ownAfter);
                             }
                         },
                         unlockedcamera$gestureCommit(key, target, links), display);
             }
             case "maxZoom" -> {
                 java.util.List<LinkedSliderRange.Linked> links = java.util.List.of(
-                        new LinkedSliderRange.Linked("minZoom", minScaled,
+                        new LinkedSliderRange.Linked("minZoom",
                                 ClientConfig.MIN_ZOOM::get, ClientConfig.MIN_ZOOM::set),
-                        new LinkedSliderRange.Linked("shoulderOffsetMaxZoom", thresholdScaled,
+                        new LinkedSliderRange.Linked("shoulderOffsetMaxZoom",
                                 ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::get, ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::set));
-                yield new LinkedSliderRange(intRange, maxScaled, ClientConfig.MAX_ZOOM::get,
+                yield new LinkedSliderRange(intRange, maxScaled, ClientConfig.MAX_ZOOM::get, toConfig,
                         () -> scaledMin, () -> scaledMax, links,
-                        v -> {
-                            double dragged = v * step;
-                            if (dragged < ClientConfig.MIN_ZOOM.get()) {
-                                ClientConfig.MIN_ZOOM.set(dragged);
+                        ownAfter -> {
+                            if (ownAfter < ClientConfig.MIN_ZOOM.get()) {
+                                ClientConfig.MIN_ZOOM.set(ownAfter);
                             }
-                            if (dragged < ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.get()) {
-                                ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.set(dragged);
+                            if (ownAfter < ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.get()) {
+                                ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.set(ownAfter);
                             }
                         },
                         unlockedcamera$gestureCommit(key, target, links), display);
             }
             case "shoulderOffsetMaxZoom" -> {
                 java.util.List<LinkedSliderRange.Linked> links = java.util.List.of();
-                yield new LinkedSliderRange(intRange, thresholdScaled, ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::get,
-                        minScaled, maxScaled, links, v -> {},
+                yield new LinkedSliderRange(intRange, thresholdScaled, ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::get, toConfig,
+                        minScaled, maxScaled, links, ownAfter -> {},
                         unlockedcamera$gestureCommit(key, target, links), display);
             }
             // Unlinked sliders use the same widget too, so arrow stepping,
             // hover-targeted arrows, and apply-on-release behave uniformly.
             default -> new LinkedSliderRange(intRange,
-                    () -> (int) Math.round(source.get() / step), source::get,
+                    () -> (int) Math.round(source.get() / step), source::get, toConfig,
                     () -> scaledMin, () -> scaledMax,
-                    java.util.List.of(), v -> {},
+                    java.util.List.of(), ownAfter -> {},
                     unlockedcamera$gestureCommit(key, target, java.util.List.of()), display);
         };
         cir.setReturnValue(new ConfigurationScreen.ConfigurationSectionScreen.Element(
@@ -197,13 +199,35 @@ public abstract class ConfigScreenSliderMixin extends OptionsSubScreen {
                         valueSet, null,
                         (int) Math.round(source.get() / step),
                         newValue -> {
-                            double newDouble = newValue * step;
-                            if (newDouble != source.get()) {
-                                // Journaled by the widget's Commit instead.
-                                target.accept(newDouble);
-                                onChanged(key);
+                            // Compare in STEPPED units: an off-grid stored value
+                            // (12.3) already rounds to this step, and writing its
+                            // stepped neighbour (12.5) would clobber what Undo just
+                            // restored or a hand edit the grid cannot show.
+                            if (newValue == (int) Math.round(source.get() / step)) {
+                                return;
                             }
+                            double newDouble = unlockedcamera$stepped(newValue, step);
+                            if (key.equals("shoulderOffsetMaxZoom")) {
+                                // The knob's fences are step units, so the knob
+                                // can sit half a step outside the real zoom
+                                // window (maxZoom 12.3 pins at 12.5); the stored
+                                // value must not.
+                                double lo = Math.min(ClientConfig.MIN_ZOOM.get(), ClientConfig.MAX_ZOOM.get());
+                                double hi = Math.max(ClientConfig.MIN_ZOOM.get(), ClientConfig.MAX_ZOOM.get());
+                                newDouble = Math.max(lo, Math.min(hi, newDouble));
+                            }
+                            // Journaled by the widget's Commit instead.
+                            target.accept(newDouble);
+                            onChanged(key);
                         })));
+    }
+
+    /** The exact decimal a slider step stands for. All three step sizes
+     * (0.05, 0.5, 1) are multiples of 0.01, and {@code v * step} alone leaves
+     * binary noise (17 * 0.05 = 0.8500000000000001) that would land in the
+     * TOML and register as a change against a clean hand-edited 0.85. */
+    private static double unlockedcamera$stepped(int v, double step) {
+        return Math.rint(v * step * 100.0) / 100.0;
     }
 
     /** A Commit journaling a gesture as one composite undo step: the dragged

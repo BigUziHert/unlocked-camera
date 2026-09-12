@@ -3,6 +3,8 @@ package com.caleb.unlockedcamera.client;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
@@ -28,6 +30,10 @@ import java.lang.reflect.Method;
  */
 final class SableCompat {
     private static boolean initialized = false;
+    /** Sable's main class loaded — decided on its own, not on whether the
+     * seat bridge below resolved, so a renamed helper cannot masquerade as
+     * "Sable absent" and let the pose bridge think there is nothing to push. */
+    private static boolean sablePresent = false;
     private static Field helperField;
     private static Method getVehicleSubLevel;
 
@@ -37,8 +43,11 @@ final class SableCompat {
     private static Class<?> poseProviderExtension;
     private static Method pushPoseSupplier;
     private static Method popPoseSupplier;
-    private static Method renderPose;
-    private static Method logicalPose;
+    /** {@code ClientSubLevel#renderPose(float)} as a handle: it runs once per
+     * sublevel per clip inside the deferred pick (BigOutlines probes many),
+     * so skip Method.invoke's boxing and access checks. */
+    private static MethodHandle renderPose;
+    private static MethodHandle logicalPose;
 
     private SableCompat() {
     }
@@ -61,14 +70,21 @@ final class SableCompat {
 
     private static void init() {
         initialized = true;
+        Class<?> sable;
         try {
-            Class<?> sable = Class.forName("dev.ryanhcode.sable.Sable");
+            sable = Class.forName("dev.ryanhcode.sable.Sable");
+            sablePresent = true;
+        } catch (Throwable t) {
+            // Sable isn't installed; run standalone.
+            return;
+        }
+        try {
             Class<?> companion = Class.forName("dev.ryanhcode.sable.ActiveSableCompanion");
             Method vehicle = companion.getMethod("getVehicleSubLevel", Entity.class);
             helperField = sable.getField("HELPER");
             getVehicleSubLevel = vehicle;
         } catch (Throwable t) {
-            // Sable isn't installed (or its internals changed); run standalone.
+            // Sable's internals changed; the seat check degrades to "never seated".
             helperField = null;
             getVehicleSubLevel = null;
         }
@@ -106,8 +122,9 @@ final class SableCompat {
             try {
                 return renderPose.invoke(subLevel, partialTick);
             } catch (Throwable t) {
-                // Not a client sublevel (should not happen on the client):
-                // fall back to the tick pose rather than abort the frame.
+                // Not a client sublevel — unreachable on the client (Sable's
+                // own supplier casts unconditionally); fall back to the tick
+                // pose rather than abort the frame.
                 try {
                     return logicalPose.invoke(subLevel);
                 } catch (Throwable t2) {
@@ -136,7 +153,7 @@ final class SableCompat {
         if (!initialized) {
             init();
         }
-        if (helperField == null) {
+        if (!sablePresent) {
             poseBridge = 1;
             return;
         }
@@ -146,10 +163,11 @@ final class SableCompat {
             pushPoseSupplier = poseProviderExtension.getMethod(
                     "sable$pushPoseSupplier", it.unimi.dsi.fastutil.Function.class);
             popPoseSupplier = poseProviderExtension.getMethod("sable$popPoseSupplier");
+            MethodHandles.Lookup lookup = MethodHandles.publicLookup();
             Class<?> clientSubLevel = Class.forName("dev.ryanhcode.sable.sublevel.ClientSubLevel");
-            renderPose = clientSubLevel.getMethod("renderPose", float.class);
+            renderPose = lookup.unreflect(clientSubLevel.getMethod("renderPose", float.class));
             Class<?> subLevel = Class.forName("dev.ryanhcode.sable.sublevel.SubLevel");
-            logicalPose = subLevel.getMethod("logicalPose");
+            logicalPose = lookup.unreflect(subLevel.getMethod("logicalPose"));
             poseBridge = 2;
         } catch (Throwable t) {
             poseProviderExtension = null;

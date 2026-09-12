@@ -81,20 +81,29 @@ public final class LinkedOptionSlider extends AbstractOptionSliderButton {
         pinKnob();
         openGesture();
         List<LinkedSliderRange.Linked> links = range.linked();
+        int newValue = range.fromSliderValue(this.value);
+        // Pushes are measured against the own value the config will HOLD
+        // after this apply, not the knob's step: the instance consumer
+        // leaves an off-grid stored value alone when the knob sits on its
+        // own step (4.3 renders as 4.5 and a click there writes nothing), and
+        // pushing siblings to the stepped 4.5 would move them on a gesture
+        // that changed nothing — past the very bound the push maintains.
+        double ownAfter = newValue == range.ownValue().getAsInt()
+                ? range.rawOwn().getAsDouble()
+                : range.toConfig().applyAsDouble(newValue);
         // Raw config values, so a push that lands on the same step as the
         // original (12.3 -> 12.5) is still seen and journaled.
         double[] before = new double[links.size()];
         for (int i = 0; i < links.size(); i++) {
             before[i] = links.get(i).raw().getAsDouble();
         }
-        range.onDragValue().accept(range.fromSliderValue(this.value));
+        range.onDragValue().accept(ownAfter);
         for (int i = 0; i < links.size(); i++) {
             if (linkedStarts[i] == null && links.get(i).raw().getAsDouble() != before[i]) {
                 linkedStarts[i] = before[i];
             }
         }
-        Integer newValue = range.fromSliderValue(this.value);
-        if (!newValue.equals(instance.get())) {
+        if (!instance.get().equals(newValue)) {
             instance.set(newValue); // the instance's consumer writes the config and flags the screen changed
         }
     }

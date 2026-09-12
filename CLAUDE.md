@@ -66,9 +66,15 @@ approval.
    bridge, and if that bridge can't resolve the pick keeps vanilla order:
    a one-frame-stale outline beats jittering ship outlines.
 9. Teleport echo restore (TeleportRotationMixin) matches incoming absolute
-   rotations against a bounded history of aims ACTUALLY transmitted (every
-   rewrite and tick send calls recordTransmittedAim; 128 entries / 5 s;
-   reset per LocalPlayer instance so a respawn rotation always applies).
+   rotations against the LIVE hold first (current/last-sent aim, no age
+   bound: the server never ages a stamp out, and an unmoving player sends
+   nothing for minutes) and then a bounded history of aims ACTUALLY
+   transmitted (every rewrite and tick send calls recordTransmittedAim;
+   128 entries / 5 s) for corrections in flight while turning or standing
+   down. Reset per LocalPlayer instance so a respawn rotation always
+   applies, and continuousAimAngles never stamps a player the cache wasn't
+   computed for. A restore with no hold running re-sends the restored
+   rotation once, or client and server disagree until the body next turns.
    Capture and restore happen only on the client thread — handleMovePlayer
    is entered first on netty, where ensureRunningOnSameThread re-schedules
    it, and a netty-side capture raced the main-thread pair.
