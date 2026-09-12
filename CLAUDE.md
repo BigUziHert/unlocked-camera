@@ -52,7 +52,26 @@ approval.
 7. Config screen: option order = definition order in ClientConfig; the slider
    and toggle-color mixins gate on translation keys / config key names — keep
    them in sync if keys ever change (renaming TOML keys resets saved configs;
-   prefer lang-only changes).
+   prefer lang-only changes). The undo journal snapshots RAW config doubles
+   (LinkedSliderRange.rawOwn / Linked.raw) and pushes compare in config
+   units — a hand-edited off-grid value (maxZoom 12.3 on the half-block
+   grid) must come back exactly from Undo, never as its stepped neighbour.
+8. Render-level targeting order: vanilla's renderLevel picks BEFORE
+   Camera#setup, so a camera-ray pick there reads the previous frame's pose
+   and the outline trails the camera at low fps. GameRendererMixin defers
+   that one pick to right after setup while the crosshair aim is active —
+   never a second pick, never a second setup (smoothing would advance
+   twice). Sable wraps the original call to push interpolated sublevel
+   poses; the deferred call re-creates that through SableCompat's pose
+   bridge, and if that bridge can't resolve the pick keeps vanilla order:
+   a one-frame-stale outline beats jittering ship outlines.
+9. Teleport echo restore (TeleportRotationMixin) matches incoming absolute
+   rotations against a bounded history of aims ACTUALLY transmitted (every
+   rewrite and tick send calls recordTransmittedAim; 64 entries / 5 s;
+   reset per LocalPlayer instance so a respawn rotation always applies).
+   Capture and restore happen only on the client thread — handleMovePlayer
+   is entered first on netty, where ensureRunningOnSameThread re-schedules
+   it, and a netty-side capture raced the main-thread pair.
 
 ## Settled by design — do not "fix"
 
@@ -95,7 +114,14 @@ plotAwareHitDistSqr (crosshairHitUsable gates them together), and the
 entity-vs-block tie-break in cameraRayPick recovers plot-space ENTITY hits
 (item frames on ship walls) the same way — Sable resolves them inside
 getEntityHitResult, and its sublevel-aware HitResult#distanceTo lives on the
-base class, so it serves entity hits too.
+base class, so it serves entity hits too. crosshairAimAngles recovers its
+entity sweep the same way (2026-09-12 review): a sublevel entity's location
+AND bounding box are plot-space, so the aim nudges along the ray into the
+entity instead of toward a centre in another frame.
+
+The 2026-09-12 review (at ec097e8) is absorbed: all 7 findings confirmed
+against source/bytecode and fixed (rules 7–9, the TACZ mounted gate, the
+honey glue hover range, the plot-space entity aim).
 
 ## TACZ (Timeless and Classics Zero) compat
 
@@ -113,6 +139,23 @@ Two mechanisms, both verified against the installed jar
   answers through that seam (their own third-person-camera hook) so the gun's
   real reticle draws whenever our crosshair would — do not paste a vanilla
   crosshair over it instead.
+- Mounted riders: the passenger gate narrows the hold to the actual draw
+  (isUsingItem) so steerable mounts aren't twisted toward the crosshair for
+  other players. Guns never start a vanilla item use, so
+  TaczCompat.isGunEngaged is the gun's "draw": shoot key down, aiming down
+  sights, charging, or shot cooldown running (IClientPlayerGunOperator +
+  ShootKey.SHOOT_KEY, reflective). TACZ sends its shoot packet from
+  ClientTickEvent.Post — after our Pre-tick hold and the passenger PosRot
+  stream — so even the first semi-auto click is stamped before it fires.
+
+## Simulated honey glue
+
+HoneyGlueClientHandler.getHitResult scales the view vector by the reach
+attribute (setback added at the attribute: R + s). updateHovered multiplies
+the attribute by FIVE first and hands the product to Create's RaycastHelper
+as the hover ray length, so the setback goes on at that call (5R + s) — at
+the attribute it became 5(R + s) and hover/deletion reached four setbacks
+too far.
 
 ## Ping Wheel compat
 

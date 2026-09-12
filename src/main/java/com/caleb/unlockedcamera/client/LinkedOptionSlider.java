@@ -32,10 +32,16 @@ public final class LinkedOptionSlider extends AbstractOptionSliderButton {
     private final LinkedSliderRange range;
     private final OptionInstance.TooltipSupplier<Integer> tooltipSupplier;
     private final Consumer<Integer> onValueChanged;
-    /** Per linked setting: its value when the open gesture first pushed it; null = untouched. */
-    private Integer[] linkedStarts;
-    /** Own config value when the open gesture started, journaled as the undo target. */
+    /** Per linked setting: its RAW config value when the open gesture first
+     * pushed it; null = untouched. Raw, not stepped: Undo must restore what
+     * was actually stored, not the step grid's nearest neighbour. */
+    private Double[] linkedStarts;
+    /** Own config value (slider units) when the open gesture started — what
+     * the instance is re-synced to. */
     private int gestureStartOwn;
+    /** Own RAW config value when the open gesture started, journaled as the
+     * undo target (a hand-edited 12.3 comes back as 12.3, not 12.5). */
+    private double gestureStartOwnRaw;
     /** A press/drag gesture is open; it journals once, when it ends. */
     private boolean gestureOpen;
 
@@ -47,7 +53,7 @@ public final class LinkedOptionSlider extends AbstractOptionSliderButton {
         this.range = range;
         this.tooltipSupplier = tooltipSupplier;
         this.onValueChanged = onValueChanged;
-        this.linkedStarts = new Integer[range.linked().size()];
+        this.linkedStarts = new Double[range.linked().size()];
         updateMessage();
     }
 
@@ -75,13 +81,15 @@ public final class LinkedOptionSlider extends AbstractOptionSliderButton {
         pinKnob();
         openGesture();
         List<LinkedSliderRange.Linked> links = range.linked();
-        int[] before = new int[links.size()];
+        // Raw config values, so a push that lands on the same step as the
+        // original (12.3 -> 12.5) is still seen and journaled.
+        double[] before = new double[links.size()];
         for (int i = 0; i < links.size(); i++) {
-            before[i] = links.get(i).value().getAsInt();
+            before[i] = links.get(i).raw().getAsDouble();
         }
         range.onDragValue().accept(range.fromSliderValue(this.value));
         for (int i = 0; i < links.size(); i++) {
-            if (linkedStarts[i] == null && links.get(i).value().getAsInt() != before[i]) {
+            if (linkedStarts[i] == null && links.get(i).raw().getAsDouble() != before[i]) {
                 linkedStarts[i] = before[i];
             }
         }
@@ -106,6 +114,7 @@ public final class LinkedOptionSlider extends AbstractOptionSliderButton {
         gestureOpen = true;
         openGestures.add(this);
         gestureStartOwn = range.ownValue().getAsInt();
+        gestureStartOwnRaw = range.rawOwn().getAsDouble();
         if (!instance.get().equals(gestureStartOwn)) {
             instance.set(gestureStartOwn);
         }
@@ -123,27 +132,29 @@ public final class LinkedOptionSlider extends AbstractOptionSliderButton {
         gestureOpen = false;
         openGestures.remove(this);
         List<LinkedSliderRange.Linked> links = range.linked();
-        Integer[] starts = linkedStarts;
-        linkedStarts = new Integer[links.size()];
-        int[] nows = new int[links.size()];
+        Double[] starts = linkedStarts;
+        linkedStarts = new Double[links.size()];
+        double[] nows = new double[links.size()];
         boolean linkedChanged = false;
         for (int i = 0; i < links.size(); i++) {
-            nows[i] = links.get(i).value().getAsInt();
+            nows[i] = links.get(i).raw().getAsDouble();
             if (starts[i] != null && starts[i] != nows[i]) {
                 linkedChanged = true;
             } else {
                 starts[i] = null;
             }
         }
-        int newOwn = range.ownValue().getAsInt();
-        if (newOwn == gestureStartOwn && !linkedChanged) {
+        // Raw comparison: a drag that returns to its starting step still
+        // rewrote an off-grid value (12.3 -> 12.5) and must be undoable.
+        double newOwnRaw = range.rawOwn().getAsDouble();
+        if (newOwnRaw == gestureStartOwnRaw && !linkedChanged) {
             return;
         }
         // No options.save(): these back ModConfigSpec values (memory-only
         // writes, flushed by the screen's own close), and saving vanilla's
         // options.txt here rewrote it once per arrow-key auto-repeat.
         onValueChanged.accept(instance.get());
-        range.commit().commit(gestureStartOwn, newOwn, starts, nows);
+        range.commit().commit(gestureStartOwnRaw, newOwnRaw, starts, nows);
     }
 
     @Override

@@ -25,13 +25,24 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * true rotation; the hold breaks that assumption.
  *
  * <p>Restore the pre-packet rotation after vanilla applies the packet whenever
- * the incoming absolute rotation is recognizably the held aim. The position
- * correction is untouched, the teleport confirm has already gone out (server
- * state is unchanged by the restore), and the next tick's hold re-stamps the
- * server — exactly the drop-and-re-stamp pattern the hold already uses.
+ * the incoming absolute rotation is recognizably a recently transmitted aim.
+ * The position correction is untouched, the teleport confirm has already gone
+ * out (server state is unchanged by the restore), and the next tick's hold
+ * re-stamps the server — exactly the drop-and-re-stamp pattern the hold
+ * already uses.
+ *
+ * <p>Thread discipline: handleMovePlayer is first entered on the netty thread,
+ * where {@code ensureRunningOnSameThread} re-schedules it onto the client
+ * thread and throws. A capture on that first entry would share these fields
+ * with the client thread — a packet arriving while another's main-thread
+ * capture/restore pair is in flight would overwrite the captured rotation
+ * with the already-applied one. Capture (and restore) only on the client
+ * thread, which is the only thread that reaches TAIL anyway.
  */
 @Mixin(ClientPacketListener.class)
 public abstract class TeleportRotationMixin {
+    @Unique
+    private boolean unlockedcamera$captured;
     @Unique
     private float unlockedcamera$preYRot;
     @Unique
@@ -43,10 +54,12 @@ public abstract class TeleportRotationMixin {
 
     @Inject(method = "handleMovePlayer", at = @At("HEAD"))
     private void unlockedcamera$captureRotation(ClientboundPlayerPositionPacket packet, CallbackInfo ci) {
-        // Also runs on the netty thread before ensureRunningOnSameThread
-        // re-schedules the packet; the main-thread invocation overwrites this
-        // capture, so the capture/restore pair that matters is same-thread.
-        LocalPlayer player = Minecraft.getInstance().player;
+        Minecraft mc = Minecraft.getInstance();
+        if (!mc.isSameThread()) {
+            return; // netty thread: the packet is about to be re-scheduled
+        }
+        LocalPlayer player = mc.player;
+        unlockedcamera$captured = player != null;
         if (player != null) {
             unlockedcamera$preYRot = player.getYRot();
             unlockedcamera$preXRot = player.getXRot();
@@ -57,11 +70,16 @@ public abstract class TeleportRotationMixin {
 
     @Inject(method = "handleMovePlayer", at = @At("TAIL"))
     private void unlockedcamera$restoreRotation(ClientboundPlayerPositionPacket packet, CallbackInfo ci) {
-        LocalPlayer player = Minecraft.getInstance().player;
+        Minecraft mc = Minecraft.getInstance();
+        if (!mc.isSameThread() || !unlockedcamera$captured) {
+            return;
+        }
+        unlockedcamera$captured = false;
+        LocalPlayer player = mc.player;
         if (player == null
                 || packet.getRelativeArguments().contains(RelativeMovement.X_ROT)
                 || packet.getRelativeArguments().contains(RelativeMovement.Y_ROT)
-                || !UnlockedCameraClient.isHeldAimEcho(packet.getYRot(), packet.getXRot())) {
+                || !UnlockedCameraClient.isHeldAimEcho(player, packet.getYRot(), packet.getXRot())) {
             return;
         }
         player.setYRot(unlockedcamera$preYRot);

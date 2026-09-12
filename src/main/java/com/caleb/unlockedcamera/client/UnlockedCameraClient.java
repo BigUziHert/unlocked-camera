@@ -7,6 +7,7 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
@@ -218,7 +219,19 @@ public class UnlockedCameraClient {
             freelookPitch = 0.0f;
             lastFreelookNanos = 0L;
             dropHeldAim();
+            trackedPlayer = null;
+            clearTransmittedAims();
             return;
+        }
+
+        // A fresh LocalPlayer instance (respawn, dimension change, reconnect):
+        // nothing stamped for the old one can be a legitimate echo for the new
+        // one — its spawn rotation arrives in exactly the packet the echo
+        // check inspects — so forget the transmitted-aim history and the cache.
+        if (mc.player != trackedPlayer) {
+            trackedPlayer = mc.player;
+            dropHeldAim();
+            clearTransmittedAims();
         }
 
         // Sampled every tick (before any later early return) for the
@@ -363,10 +376,15 @@ public class UnlockedCameraClient {
         // re-derives from its own rotation. Instant uses (pearls, snowballs)
         // stay covered by the click-time UseItem rewrite, which the
         // unconditional per-tick passenger rotation stream makes sufficient
-        // while mounted. (Sable seats never reach here — their path returned
-        // above.)
+        // while mounted. TACZ guns never start a vanilla item use — their
+        // "draw" is the gun being aimed, charged, or fired, which TaczCompat
+        // reads from the gun operator; the shoot packet itself goes out from
+        // ClientTickEvent.Post, so a press seen here has its aim on the wire
+        // (this tick's passenger rotation stream) before the shot arrives.
+        // (Sable seats never reach here — their path returned above.)
         boolean holdWanted = (holdingRangedItem(mc) || freelookDeflected(mc))
-                && (!mc.player.isPassenger() || mc.player.isUsingItem());
+                && (!mc.player.isPassenger() || mc.player.isUsingItem()
+                        || TaczCompat.isGunEngaged(mc.player));
         float[] freshAim = holdWanted ? crosshairAimAngles() : null;
         boolean hadAim = cachedHeldAim != null;
         cachedHeldAim = freshAim;
@@ -391,6 +409,7 @@ public class UnlockedCameraClient {
                         || Math.abs(freshAim[1] - lastSentAim[1]) > 0.25f)) {
             mc.getConnection().send(new ServerboundMovePlayerPacket.Rot(
                     freshAim[0], freshAim[1], mc.player.onGround()));
+            recordTransmittedAim(freshAim);
             lastSentAim = freshAim;
             lastAimSendTick = heldAimTicks;
         }
@@ -565,14 +584,34 @@ public class UnlockedCameraClient {
                 mc.player, sweepStart, entityEnd,
                 new AABB(sweepStart, entityEnd).inflate(1.0),
                 target -> !target.isSpectator() && target.isPickable(), Mth.square(entitySearch));
+        Vec3 entityPoint = null;
         if (entityAim != null) {
-            // Nudge toward the entity's centre so spread can't graze past.
-            Vec3 entityPoint = entityAim.getLocation();
-            Vec3 toBody = entityAim.getEntity().getBoundingBox().getCenter().subtract(entityPoint);
-            double toBodyLen = toBody.length();
-            if (toBodyLen > 1.0E-4) {
-                entityPoint = entityPoint.add(toBody.scale(Math.min(0.2, toBodyLen * 0.35) / toBodyLen));
+            entityPoint = entityAim.getLocation();
+            if (entityPoint.distanceToSqr(origin) > Mth.square(range + 1.0)) {
+                // An entity riding a Sable sublevel (an item frame on a ship
+                // wall, a mob on deck): Sable clips the sweep inside the
+                // sublevel's frame, so the location AND the entity's bounding
+                // box come back in far-away plot space. Subtracting the
+                // world-space eye from either is garbage — recover the true
+                // along-ray point exactly like the block hit above, and nudge
+                // INTO the entity along the ray instead of toward a centre
+                // that lives in another coordinate frame. The sweep's own
+                // occlusion bound (entitySearch, already recovered) still
+                // holds: Sable measured the sweep's distances sublevel-aware.
+                double t = plotSpaceAlongRay(entityAim, origin, direction, mc.player, playerDepth);
+                entityPoint = t > 0.0
+                        ? origin.add(direction.scale(Math.min(t + 0.2, entitySearch)))
+                        : null; // degenerate solve: measurement noise, keep the block aim
+            } else {
+                // Nudge toward the entity's centre so spread can't graze past.
+                Vec3 toBody = entityAim.getEntity().getBoundingBox().getCenter().subtract(entityPoint);
+                double toBodyLen = toBody.length();
+                if (toBodyLen > 1.0E-4) {
+                    entityPoint = entityPoint.add(toBody.scale(Math.min(0.2, toBodyLen * 0.35) / toBodyLen));
+                }
             }
+        }
+        if (entityPoint != null) {
             aimPoint = entityPoint;
         } else if (!plotSpace && hit instanceof BlockHitResult buriedHit && hit.getType() == HitResult.Type.BLOCK) {
             // Bury the aim point toward the struck block's CENTRE (capped). A
@@ -652,21 +691,81 @@ public class UnlockedCameraClient {
         return cachedHeldAim;
     }
 
+    /** The LocalPlayer the aim history belongs to; a new instance resets it. */
+    private static LocalPlayer trackedPlayer;
+
+    /**
+     * Ring of aim rotations ACTUALLY transmitted (tick sends, rewritten
+     * movement packets, rewritten use packets), for the echo check below. A
+     * correction the server issues carries the rotation it held when it
+     * decided to correct — under latency while the player turns, that is a
+     * stamp several sends old, which "current aim or latest send" could never
+     * recognize. Bounded by count and by age: an echo cannot be older than
+     * the round trip plus the server's 20-tick pending-teleport re-send. At
+     * one stamp per tick (a walking rider's movement stream) 128 entries
+     * outlast the five-second lifetime, so age is always the binding bound.
+     */
+    private static final int AIM_HISTORY_SIZE = 128;
+    private static final long AIM_HISTORY_LIFETIME_NANOS = 5_000_000_000L;
+    private static final float[] aimHistoryYaw = new float[AIM_HISTORY_SIZE];
+    private static final float[] aimHistoryPitch = new float[AIM_HISTORY_SIZE];
+    private static final long[] aimHistoryNanos = new long[AIM_HISTORY_SIZE];
+    private static int aimHistoryNext;
+    private static int aimHistoryCount;
+    /** The array the last entry was recorded from: a tick's cached aim is
+     * stamped into every movement packet of that tick, so the same instance
+     * arriving again is the same transmission, not a new one. */
+    private static float[] lastRecordedAim;
+
+    /**
+     * Note that {@code aim} ({yaw, pitch, ...}) just went out on the wire.
+     * Called by the tick sender and by the packet rewrites in
+     * {@link com.caleb.unlockedcamera.mixin.ClientPacketListenerMixin}.
+     */
+    public static void recordTransmittedAim(float[] aim) {
+        if (aim == null || aim == lastRecordedAim) {
+            return;
+        }
+        lastRecordedAim = aim;
+        aimHistoryYaw[aimHistoryNext] = aim[0];
+        aimHistoryPitch[aimHistoryNext] = aim[1];
+        aimHistoryNanos[aimHistoryNext] = System.nanoTime();
+        aimHistoryNext = (aimHistoryNext + 1) % AIM_HISTORY_SIZE;
+        aimHistoryCount = Math.min(aimHistoryCount + 1, AIM_HISTORY_SIZE);
+    }
+
+    private static void clearTransmittedAims() {
+        aimHistoryCount = 0;
+        aimHistoryNext = 0;
+        lastRecordedAim = null;
+    }
+
     /**
      * Called from {@link com.caleb.unlockedcamera.mixin.TeleportRotationMixin}:
-     * whether an incoming ABSOLUTE server rotation is just the held aim echoed
-     * back. While the hold is active the server's stored rotation IS the
-     * stamped aim, so rubber-band corrections return it instead of vanilla's
-     * effectively rotation-neutral value. The aim drifts well under a degree
-     * between stamps, so a one-degree window recognizes the echo; a deliberate
-     * server rotation landing inside it is indistinguishable from the aim
-     * anyway.
+     * whether an incoming ABSOLUTE server rotation for {@code player} is just
+     * a stamped crosshair aim echoed back. While the hold is active the
+     * server's stored rotation IS the stamped aim, so rubber-band corrections
+     * return it instead of vanilla's effectively rotation-neutral value. The
+     * aim drifts well under a degree between stamps, so a one-degree window
+     * around any recently transmitted aim recognizes the echo; a deliberate
+     * server rotation landing inside that window is indistinguishable from
+     * the aim anyway, and the window is what keeps deliberate ones intact —
+     * widening it would swallow them. A packet for a player other than the
+     * one the history was recorded for (respawn, dimension change) is never
+     * an echo: its spawn rotation must apply.
      */
-    public static boolean isHeldAimEcho(float yaw, float pitch) {
-        for (float[] aim : new float[][] {cachedHeldAim, lastSentAim}) {
-            if (aim != null
-                    && Math.abs(Mth.wrapDegrees(yaw - aim[0])) < 1.0f
-                    && Math.abs(pitch - aim[1]) < 1.0f) {
+    public static boolean isHeldAimEcho(LocalPlayer player, float yaw, float pitch) {
+        if (player == null || player != trackedPlayer) {
+            return false;
+        }
+        long now = System.nanoTime();
+        for (int i = 1; i <= aimHistoryCount; i++) {
+            int slot = Math.floorMod(aimHistoryNext - i, AIM_HISTORY_SIZE);
+            if (now - aimHistoryNanos[slot] > AIM_HISTORY_LIFETIME_NANOS) {
+                break; // older entries only get older
+            }
+            if (Math.abs(Mth.wrapDegrees(yaw - aimHistoryYaw[slot])) < 1.0f
+                    && Math.abs(pitch - aimHistoryPitch[slot]) < 1.0f) {
                 return true;
             }
         }
@@ -921,6 +1020,32 @@ public class UnlockedCameraClient {
         double tz = dir.z == 0.0 ? Double.POSITIVE_INFINITY
                 : ((dir.z > 0.0 ? pos.getZ() + 1 : pos.getZ()) - origin.z) / dir.z;
         return Math.min(tx, Math.min(ty, tz));
+    }
+
+    /**
+     * Called from {@link com.caleb.unlockedcamera.mixin.GameRendererMixin}:
+     * whether this frame's render-level pick should move from BEFORE
+     * {@code Camera#setup} to right after it. Vanilla picks first and sets the
+     * camera up second, which is harmless for an eye ray (the eye is entity
+     * state) but makes the camera ray here read the PREVIOUS frame's pose —
+     * the block outline trails the displayed camera by a frame, visibly at
+     * low fps. Only while the crosshair aim is active, and only when the
+     * deferred pick can be run under the same Sable sublevel poses the
+     * original call site gets (see {@link SableCompat#canPushRenderPoses}):
+     * without those, ship outlines would jitter instead — the vanilla
+     * ordering is the lesser evil then.
+     */
+    public static boolean shouldDeferRenderPick() {
+        return crosshairAimActive() && SableCompat.canPushRenderPoses();
+    }
+
+    /**
+     * Run the deferred render pick under Sable's interpolated sublevel poses
+     * for {@code partialTick}, exactly as Sable's own wrapper does around the
+     * original call site (plain call when Sable is absent).
+     */
+    public static void runDeferredRenderPick(float partialTick, Runnable pick) {
+        SableCompat.withRenderPoses(partialTick, pick);
     }
 
     /**

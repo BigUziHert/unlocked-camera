@@ -20,7 +20,12 @@ import org.spongepowered.asm.mixin.injection.ModifyVariable;
  * with the crosshair aim (the tick handler also sends one whenever the aim
  * moves), keeping the server's body and head glued to the crosshair before any
  * click. ServerboundUseItemPacket carries a rotation of its own; it gets the
- * aim too.
+ * aim too (and the server stamps THAT into the player's rotation as well —
+ * handleUseItem calls absRotateTo).
+ *
+ * <p>Every rewrite is reported to the transmitted-aim history, which is what
+ * the teleport echo check consults: only rotations that actually went out
+ * can come back.
  */
 @Mixin(ClientCommonPacketListenerImpl.class)
 public abstract class ClientPacketListenerMixin {
@@ -29,11 +34,13 @@ public abstract class ClientPacketListenerMixin {
         if (packet instanceof ServerboundMovePlayerPacket.Rot rot) {
             float[] aim = UnlockedCameraClient.continuousAimAngles();
             if (aim != null) {
+                UnlockedCameraClient.recordTransmittedAim(aim);
                 return new ServerboundMovePlayerPacket.Rot(aim[0], aim[1], rot.isOnGround());
             }
         } else if (packet instanceof ServerboundMovePlayerPacket.PosRot posRot) {
             float[] aim = UnlockedCameraClient.continuousAimAngles();
             if (aim != null) {
+                UnlockedCameraClient.recordTransmittedAim(aim);
                 return new ServerboundMovePlayerPacket.PosRot(
                         posRot.getX(0.0), posRot.getY(0.0), posRot.getZ(0.0),
                         aim[0], aim[1], posRot.isOnGround());
@@ -62,6 +69,7 @@ public abstract class ClientPacketListenerMixin {
             // right back.
             UnlockedCameraClient.requestAimResync();
         }
+        UnlockedCameraClient.recordTransmittedAim(aim);
         return new ServerboundUseItemPacket(use.getHand(), use.getSequence(), aim[0], aim[1]);
     }
 }

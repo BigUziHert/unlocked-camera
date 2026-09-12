@@ -49,9 +49,18 @@ public abstract class SimulatedHoneyGlueMixin {
      * behind the eye. Without extending the reach by that setback the segment
      * ends at the player and every clip misses, which killed the hover
      * outline in third person. Same pattern as the steering wheel's range wrap.
+     *
+     * <p>getHitResult scales the view vector by the attribute directly, so the
+     * setback is added to the attribute. updateHovered is different: it
+     * multiplies the attribute by five FIRST and hands the product to Create's
+     * RaycastHelper as the hover ray's length (Simulated 1.3.0 bytecode), so
+     * adding the setback at the attribute produced 5(R + s) — the hover
+     * reached four setbacks too far — instead of the 5R + s that keeps
+     * first-person hover reach in front of the player. That ray gets its
+     * setback at the ray call below instead.
      */
     @WrapOperation(
-            method = {"getHitResult", "updateHovered"},
+            method = "getHitResult",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getAttributeValue(Lnet/minecraft/core/Holder;)D"),
             require = 0)
     private double unlockedcamera$glueRayRange(Player player, Holder<?> attribute, Operation<Double> original) {
@@ -63,5 +72,20 @@ public abstract class SimulatedHoneyGlueMixin {
             return value;
         }
         return value + UnlockedCameraClient.crosshairRaySetback(player);
+    }
+
+    /**
+     * The hover ray's length, AFTER Simulated's own scaling and right where
+     * the ray is built: camera origin (wrapped above) plus a crosshair-ray
+     * target (RaycastHelper is redirected by CreateRaycastMixin), so the raw
+     * setback is the exact extension that keeps the reach in front of the
+     * player unchanged.
+     */
+    @WrapOperation(
+            method = "updateHovered",
+            at = @At(value = "INVOKE", target = "Lcom/simibubi/create/foundation/utility/RaycastHelper;getTraceTarget(Lnet/minecraft/world/entity/player/Player;DLnet/minecraft/world/phys/Vec3;)Lnet/minecraft/world/phys/Vec3;"),
+            require = 0)
+    private Vec3 unlockedcamera$hoverRayRange(Player player, double range, Vec3 origin, Operation<Vec3> original) {
+        return original.call(player, range + UnlockedCameraClient.crosshairRaySetback(player), origin);
     }
 }

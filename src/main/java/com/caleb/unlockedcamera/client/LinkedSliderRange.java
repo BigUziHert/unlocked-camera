@@ -4,6 +4,7 @@ import com.mojang.serialization.Codec;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.DoubleSupplier;
 import java.util.function.Function;
 import java.util.function.IntConsumer;
 import java.util.function.IntFunction;
@@ -21,9 +22,15 @@ import net.minecraft.util.Mth;
  * bound can push its dependents along), and the idle slider follows pushes by
  * re-syncing from {@code ownValue}. Used to keep the zoom sliders and the
  * shoulder threshold working together.
+ *
+ * <p>The slider works in stepped integer units ({@code ownValue}, the linked
+ * {@code value}s); the undo journal works in RAW config units
+ * ({@code rawOwn}, the linked {@code raw}s), so a hand-edited value the step
+ * grid cannot represent (maxZoom = 12.3 on a half-block grid) is restored
+ * exactly by Undo instead of as its rounded neighbour.
  */
 public record LinkedSliderRange(OptionInstance.IntRange delegate,
-        IntSupplier ownValue, IntSupplier liveMin, IntSupplier liveMax,
+        IntSupplier ownValue, DoubleSupplier rawOwn, IntSupplier liveMin, IntSupplier liveMax,
         List<Linked> linked, IntConsumer onDragValue, Commit commit,
         IntFunction<Component> display)
         implements OptionInstance.SliderableValueSet<Integer> {
@@ -31,20 +38,22 @@ public record LinkedSliderRange(OptionInstance.IntRange delegate,
     /**
      * A setting this slider's drags can push along: its config key (so the
      * screen's onChanged bookkeeping names the setting that actually moved),
-     * its live value in slider units, and its setter in config units (used by
+     * its live value in slider units, its raw value in config units (what the
+     * journal snapshots), and its setter in config units (used by
      * {@link Commit} to journal the push into the undo history).
      */
-    public record Linked(String key, IntSupplier value, Consumer<Double> set) {}
+    public record Linked(String key, IntSupplier value, DoubleSupplier raw, Consumer<Double> set) {}
 
     /**
      * Journals a finished gesture into the config screen's undo history: the
      * dragged slider's change plus every linked setting the gesture pushed —
-     * as one composite step, so a single Undo reverts the whole gesture.
-     * {@code linkedStarts[i]} is null when linked setting i was not pushed.
+     * as one composite step, so a single Undo reverts the whole gesture. All
+     * values are raw config units; {@code linkedStarts[i]} is null when linked
+     * setting i was not pushed.
      */
     @FunctionalInterface
     public interface Commit {
-        void commit(int oldOwn, int newOwn, Integer[] linkedStarts, int[] linkedNow);
+        void commit(double oldOwn, double newOwn, Double[] linkedStarts, double[] linkedNow);
     }
 
     @Override

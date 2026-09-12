@@ -127,6 +127,10 @@ public abstract class ConfigScreenSliderMixin extends OptionsSubScreen {
         // gesture, covering the pushed sibling); their OptionInstance consumer
         // below only applies. (The threshold's own follow when a zoom bound
         // moves through it is bounded and not journaled.)
+        // Pushes compare in RAW config units: on the step grid a hand-edited
+        // maxZoom of 12.3 reads as 12.5, and a minZoom dragged to 12.5 would
+        // stop pushing exactly there — leaving the pair inverted by the
+        // rounding slack. The journal snapshots raw values for the same reason.
         java.util.function.IntSupplier minScaled =
                 () -> (int) Math.round(ClientConfig.MIN_ZOOM.get() / step);
         java.util.function.IntSupplier maxScaled =
@@ -136,49 +140,55 @@ public abstract class ConfigScreenSliderMixin extends OptionsSubScreen {
         OptionInstance.ValueSet<Integer> valueSet = switch (key) {
             case "minZoom" -> {
                 java.util.List<LinkedSliderRange.Linked> links = java.util.List.of(
-                        new LinkedSliderRange.Linked("maxZoom", maxScaled, ClientConfig.MAX_ZOOM::set),
-                        new LinkedSliderRange.Linked("shoulderOffsetMaxZoom", thresholdScaled, ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::set));
-                yield new LinkedSliderRange(intRange, minScaled,
+                        new LinkedSliderRange.Linked("maxZoom", maxScaled,
+                                ClientConfig.MAX_ZOOM::get, ClientConfig.MAX_ZOOM::set),
+                        new LinkedSliderRange.Linked("shoulderOffsetMaxZoom", thresholdScaled,
+                                ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::get, ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::set));
+                yield new LinkedSliderRange(intRange, minScaled, ClientConfig.MIN_ZOOM::get,
                         () -> scaledMin, () -> scaledMax, links,
                         v -> {
-                            if (v > maxScaled.getAsInt()) {
-                                ClientConfig.MAX_ZOOM.set(v * step);
+                            double dragged = v * step;
+                            if (dragged > ClientConfig.MAX_ZOOM.get()) {
+                                ClientConfig.MAX_ZOOM.set(dragged);
                             }
-                            if (v > thresholdScaled.getAsInt()) {
-                                ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.set(v * step);
+                            if (dragged > ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.get()) {
+                                ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.set(dragged);
                             }
                         },
-                        unlockedcamera$gestureCommit(key, target, links, step), display);
+                        unlockedcamera$gestureCommit(key, target, links), display);
             }
             case "maxZoom" -> {
                 java.util.List<LinkedSliderRange.Linked> links = java.util.List.of(
-                        new LinkedSliderRange.Linked("minZoom", minScaled, ClientConfig.MIN_ZOOM::set),
-                        new LinkedSliderRange.Linked("shoulderOffsetMaxZoom", thresholdScaled, ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::set));
-                yield new LinkedSliderRange(intRange, maxScaled,
+                        new LinkedSliderRange.Linked("minZoom", minScaled,
+                                ClientConfig.MIN_ZOOM::get, ClientConfig.MIN_ZOOM::set),
+                        new LinkedSliderRange.Linked("shoulderOffsetMaxZoom", thresholdScaled,
+                                ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::get, ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::set));
+                yield new LinkedSliderRange(intRange, maxScaled, ClientConfig.MAX_ZOOM::get,
                         () -> scaledMin, () -> scaledMax, links,
                         v -> {
-                            if (v < minScaled.getAsInt()) {
-                                ClientConfig.MIN_ZOOM.set(v * step);
+                            double dragged = v * step;
+                            if (dragged < ClientConfig.MIN_ZOOM.get()) {
+                                ClientConfig.MIN_ZOOM.set(dragged);
                             }
-                            if (v < thresholdScaled.getAsInt()) {
-                                ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.set(v * step);
+                            if (dragged < ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.get()) {
+                                ClientConfig.SHOULDER_OFFSET_MAX_ZOOM.set(dragged);
                             }
                         },
-                        unlockedcamera$gestureCommit(key, target, links, step), display);
+                        unlockedcamera$gestureCommit(key, target, links), display);
             }
             case "shoulderOffsetMaxZoom" -> {
                 java.util.List<LinkedSliderRange.Linked> links = java.util.List.of();
-                yield new LinkedSliderRange(intRange, thresholdScaled,
+                yield new LinkedSliderRange(intRange, thresholdScaled, ClientConfig.SHOULDER_OFFSET_MAX_ZOOM::get,
                         minScaled, maxScaled, links, v -> {},
-                        unlockedcamera$gestureCommit(key, target, links, step), display);
+                        unlockedcamera$gestureCommit(key, target, links), display);
             }
             // Unlinked sliders use the same widget too, so arrow stepping,
             // hover-targeted arrows, and apply-on-release behave uniformly.
             default -> new LinkedSliderRange(intRange,
-                    () -> (int) Math.round(source.get() / step),
+                    () -> (int) Math.round(source.get() / step), source::get,
                     () -> scaledMin, () -> scaledMax,
                     java.util.List.of(), v -> {},
-                    unlockedcamera$gestureCommit(key, target, java.util.List.of(), step), display);
+                    unlockedcamera$gestureCommit(key, target, java.util.List.of()), display);
         };
         cir.setReturnValue(new ConfigurationScreen.ConfigurationSectionScreen.Element(
                 getTranslationComponent(key), getTooltipComponent(key, range),
@@ -198,19 +208,21 @@ public abstract class ConfigScreenSliderMixin extends OptionsSubScreen {
 
     /** A Commit journaling a gesture as one composite undo step: the dragged
      * value plus every linked setting the gesture pushed, so a single Undo
-     * reverts everything the gesture touched. */
+     * reverts everything the gesture touched. Values arrive in raw config
+     * units (the widget snapshots the config itself), so Undo restores an
+     * off-grid value exactly — never its stepped neighbour. */
     private LinkedSliderRange.Commit unlockedcamera$gestureCommit(String key,
             java.util.function.Consumer<Double> own,
-            java.util.List<LinkedSliderRange.Linked> links, double step) {
+            java.util.List<LinkedSliderRange.Linked> links) {
         return (oldOwn, newOwn, linkedStarts, linkedNow) -> {
             java.util.List<ConfigurationScreen.UndoManager.Step<?>> steps = new java.util.ArrayList<>();
             steps.add(undoManager.step((Double v) -> {
                 own.accept(v);
                 onChanged(key);
-            }, newOwn * step, (Double v) -> {
+            }, newOwn, (Double v) -> {
                 own.accept(v);
                 onChanged(key);
-            }, oldOwn * step));
+            }, oldOwn));
             for (int i = 0; i < links.size(); i++) {
                 if (linkedStarts[i] != null) {
                     java.util.function.Consumer<Double> set = links.get(i).set();
@@ -218,10 +230,10 @@ public abstract class ConfigScreenSliderMixin extends OptionsSubScreen {
                     steps.add(undoManager.step((Double v) -> {
                         set.accept(v);
                         onChanged(linkedKey);
-                    }, linkedNow[i] * step, (Double v) -> {
+                    }, linkedNow[i], (Double v) -> {
                         set.accept(v);
                         onChanged(linkedKey);
-                    }, linkedStarts[i] * step));
+                    }, linkedStarts[i]));
                 }
             }
             undoManager.add(steps);
