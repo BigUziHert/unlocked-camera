@@ -30,7 +30,7 @@ public final class ClientConfig {
             .define("crosshairAlways", false);
 
     public static final ModConfigSpec.BooleanValue CROSSHAIR_ON_SHOULDER_OFFSET = BUILDER
-            .comment("Show the aim-corrected crosshair while the shoulder offset is engaged.")
+            .comment("Show the aim-corrected crosshair at or below Shoulder Offset Max Zoom once the shoulder slide is nearly in place. It stays visible through shoulder swaps and wall clearance.")
             .define("crosshairOnShoulderOffset", true);
 
     public static final ModConfigSpec.BooleanValue SHOW_ENTER_MESSAGE = BUILDER

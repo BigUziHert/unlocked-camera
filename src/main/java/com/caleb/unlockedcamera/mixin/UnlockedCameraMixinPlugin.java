@@ -22,6 +22,12 @@ import java.util.Set;
 public class UnlockedCameraMixinPlugin implements IMixinConfigPlugin {
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        if (mixinClassName.contains(".BetterCombat")) {
+            return LoadingModList.get().getModFileById("bettercombat") != null;
+        }
+        if (mixinClassName.contains(".JustZoom")) {
+            return LoadingModList.get().getModFileById("justzoom") != null;
+        }
         if (mixinClassName.contains(".Simulated")) {
             return LoadingModList.get().getModFileById("simulated") != null;
         }

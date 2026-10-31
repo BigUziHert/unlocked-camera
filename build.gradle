@@ -14,6 +14,16 @@ base {
 // Mojang ships Java 21 to end users in 1.21.1, so mods should target Java 21.
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
+// Opt-in instrumentation lives outside the shipped mod. Only launch against a
+// disposable pack copy prepared under build/modpack-test/game.
+if (providers.gradleProperty('cameraQa').isPresent()) {
+    sourceSets.main.java.srcDir 'src/qa/java'
+    tasks.named('jar') { archiveClassifier = 'qa' }
+} else {
+    // Keep instrumentation out even if an IDE leaves stale opt-in class files.
+    tasks.named('jar') { exclude 'com/caleb/unlockedcamera/qa/**' }
+}
+
 neoForge {
     // Specify the version of NeoForge to use.
     version = project.neo_version
@@ -38,9 +48,19 @@ neoForge {
             gameDirectory = project.file('run2')
         }
 
+        if (providers.gradleProperty('cameraQa').isPresent()) {
+            modpackTest {
+                client()
+                gameDirectory = project.file('build/modpack-test/game')
+                programArguments.addAll('--username', 'CameraQA', '--width', '1280', '--height', '720',
+                        '--quickPlaySingleplayer', 'Camera QA')
+                jvmArguments.addAll('-Xmx10G', '-XX:+UseZGC')
+            }
+        }
+
         configureEach {
             systemProperty 'forge.logging.markers', 'REGISTRIES'
-            logLevel = org.slf4j.event.Level.DEBUG
+            logLevel = name == 'modpackTest' ? org.slf4j.event.Level.INFO : org.slf4j.event.Level.DEBUG
         }
     }
 
@@ -81,6 +101,16 @@ neoForge.ideSyncTask generateModMetadata
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8' // Use the UTF-8 charset for Java compilation
 }
+
+tasks.register('shoulderCrosshairTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.caleb.unlockedcamera.client.ShoulderCrosshairStateTest'
+}
+tasks.named('check') { dependsOn 'shoulderCrosshairTest' }
+// The dependency-free regression runner above has a main method, not JUnit
+// annotations. Gradle's ordinary test discovery intentionally finds no tests.
+tasks.named('test') { failOnNoDiscoveredTests = false }
 
 // IDEA no longer automatically downloads sources/javadoc jars for dependencies, so we need to explicitly enable the behavior.
 idea {

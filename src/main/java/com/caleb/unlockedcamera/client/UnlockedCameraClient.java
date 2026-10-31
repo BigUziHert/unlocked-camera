@@ -16,8 +16,8 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.EnderpearlItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ProjectileItem;
+import net.minecraft.world.item.ProjectileWeaponItem;
 import net.minecraft.util.Mth;
-import net.minecraft.util.SmoothDouble;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
@@ -37,9 +37,7 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
-import net.neoforged.neoforge.client.ClientHooks;
 import net.neoforged.neoforge.client.event.CalculateDetachedCameraDistanceEvent;
-import net.neoforged.neoforge.client.event.CalculatePlayerTurnEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
@@ -100,6 +98,7 @@ public class UnlockedCameraClient {
     /** Which shoulder the camera favors when zoomed in: +1 or -1. */
     private static int shoulderSide = 1;
     private static float shoulderOffset = 0.0f;
+    private static final ShoulderCrosshairState shoulderCrosshair = new ShoulderCrosshairState();
     /** Wall clearance (magnitude) on the current side: drops instantly, releases smoothly. */
     private static float shoulderClearance = 0.75f;
     private static float lastClearanceSign = 0.0f;
@@ -382,9 +381,15 @@ public class UnlockedCameraClient {
         // ClientTickEvent.Post, so a press seen here has its aim on the wire
         // (this tick's passenger rotation stream) before the shot arrives.
         // (Sable seats never reach here — their path returned above.)
-        boolean holdWanted = (holdingRangedItem(mc) || freelookDeflected(mc))
+        // Simply Swords also needs pre-alignment: its server target picker reads
+        // head rotation, which lags body rotation by a tick. Ordinary melee
+        // weapons do not hold aim; ability weapons follow the crossbow rule.
+        // On mounts, retain the narrower active-key/final-release gate.
+        boolean simplySwordsAbility = SimplySwordsCompat.isAbilityEngaged(mc.player);
+        boolean holdWanted = (holdingRangedItem(mc) || SimplySwordsCompat.isAbilityHeld(mc.player)
+                || simplySwordsAbility || freelookDeflected(mc))
                 && (!mc.player.isPassenger() || mc.player.isUsingItem()
-                        || TaczCompat.isGunEngaged(mc.player));
+                        || TaczCompat.isGunEngaged(mc.player) || simplySwordsAbility);
         float[] freshAim = holdWanted ? crosshairAimAngles() : null;
         boolean hadAim = cachedHeldAim != null;
         cachedHeldAim = freshAim;
@@ -800,6 +805,10 @@ public class UnlockedCameraClient {
             UseAnim anim = stack.getUseAnimation();
             if (anim == UseAnim.BOW || anim == UseAnim.CROSSBOW || anim == UseAnim.SPEAR
                     || stack.getItem() instanceof ProjectileItem
+                    // Modded launchers can use a custom pose (UseAnim.NONE),
+                    // e.g. Supplementaries' slingshot fires on release. The
+                    // click-time rewrite alone is restored before that release.
+                    || stack.getItem() instanceof ProjectileWeaponItem
                     // EnderpearlItem does NOT implement ProjectileItem in
                     // 1.21.1 — this clause alone enables the hold for pearls.
                     || stack.getItem() instanceof EnderpearlItem
@@ -854,12 +863,24 @@ public class UnlockedCameraClient {
         mc.levelRenderer.needsUpdate();
     }
 
+    /** Whether this mod currently owns the detached camera, including its config gates. */
+    public static boolean isUnlockedCameraActive() {
+        return active && ClientConfig.unlockedCameraEnabled();
+    }
+
     static void onMouseScroll(InputEvent.MouseScrollingEvent event) {
         Minecraft mc = Minecraft.getInstance();
         // The spectator check covers the frames between a gamemode switch and
         // the next tick (which drops active): spectator fly-speed and menu
         // scrolling both run after this event, and must not be swallowed.
         if (!active || mc.screen != null || mc.player == null || mc.player.isSpectator()) {
+            return;
+        }
+
+        // Just Zoom consumes scroll later in MouseHandler, after NeoForge's
+        // event. Let its held zoom key adjust magnification without changing
+        // camera distance or swallowing the event before its handler sees it.
+        if (JustZoomCompat.isZooming()) {
             return;
         }
 
@@ -920,6 +941,7 @@ public class UnlockedCameraClient {
         collisionCap = VANILLA_DISTANCE * cameraEntityScale(mc.player);
         lastCapNanos = 0L;
         shoulderOffset = 0.0f;
+        shoulderCrosshair.reset();
         shoulderClearance = ClientConfig.shoulderOffsetAmount();
         lastClearanceSign = 0.0f;
         lastShoulderNanos = 0L;
@@ -938,7 +960,9 @@ public class UnlockedCameraClient {
      */
     public static boolean shouldForceCrosshair() {
         return active && (ClientConfig.crosshairAlways()
-                || (ClientConfig.crosshairOnShoulderOffset() && shoulderEngaged()));
+                || (ClientConfig.crosshairOnShoulderOffset() && shoulderEngaged()
+                        && targetDistance <= ClientConfig.shoulderOffsetMaxZoom()
+                        && shoulderCrosshair.isReady()));
     }
 
     /**
@@ -1471,55 +1495,23 @@ public class UnlockedCameraClient {
                 && mc.options.getCameraType() == CameraType.FIRST_PERSON;
     }
 
-    /** Freelook's own cinematic-camera smoothers, mirroring MouseHandler's
-     * smoothTurnX/Y (vanilla's stop advancing while turnPlayer is cancelled). */
-    private static final SmoothDouble freelookSmoothX = new SmoothDouble();
-    private static final SmoothDouble freelookSmoothY = new SmoothDouble();
-
     /**
-     * Called from {@link com.caleb.unlockedcamera.mixin.MouseHandlerMixin} at the
-     * top of {@code MouseHandler#turnPlayer}. While freelooking, accumulates the
-     * mouse movement into a camera-only yaw/pitch offset and returns true so the
-     * player entity itself doesn't turn.
+     * Consume the final, already scaled mouse deltas that MouseHandler would pass
+     * to LocalPlayer.turn. Sensitivity, zoom, smoothing, and inverted Y are handled
+     * by the original mouse pipeline, so freelook and normal look stay identical.
+     * Only Entity.turn's final 0.15 degrees-per-unit conversion remains here.
      */
-    public static boolean freelookMouseTurn(double accumulatedDX, double accumulatedDY, double movementTime) {
+    public static boolean freelookMouseTurn(double dx, double dy) {
         Minecraft mc = Minecraft.getInstance();
         if (!isFreelookHeld(mc)) {
-            freelookSmoothX.reset();
-            freelookSmoothY.reset();
             return false;
         }
-
-        // Vanilla's sensitivity curve (MouseHandler#turnPlayer), including the 0.15
-        // factor Entity#turn applies and the cinematic-camera smoothing, so
-        // freelook feels identical to normal look. Cancelling turnPlayer at HEAD
-        // also skips its CalculatePlayerTurnEvent — the event's only call site —
-        // so post it here: a mod adjusting sensitivity or forcing cinematic
-        // through it must apply to freelook too.
-        CalculatePlayerTurnEvent turnEvent = ClientHooks.getTurnPlayerValues(
-                mc.options.sensitivity().get(), mc.options.smoothCamera);
-        double d = turnEvent.getMouseSensitivity() * 0.6 + 0.2;
-        double cubed = d * d * d;
-        double dx;
-        double dy;
-        if (turnEvent.getCinematicCameraEnabled()) {
-            double scaled = cubed * 8.0;
-            dx = freelookSmoothX.getNewDeltaValue(accumulatedDX * scaled, movementTime * scaled);
-            dy = freelookSmoothY.getNewDeltaValue(accumulatedDY * scaled, movementTime * scaled);
-        } else {
-            freelookSmoothX.reset();
-            freelookSmoothY.reset();
-            double scaled = mc.player.isScoping() ? cubed : cubed * 8.0;
-            dx = accumulatedDX * scaled;
-            dy = accumulatedDY * scaled;
-        }
-        double invert = mc.options.invertYMouse().get() ? -1.0 : 1.0;
 
         float yawLimit = ClientConfig.freelookYawLimit();
         freelookYaw = Mth.clamp(freelookYaw + (float) (dx * 0.15), -yawLimit, yawLimit);
         // Clamp so the *final* pitch stays within vanilla's straight-up/down limits.
         float basePitch = mc.player.getXRot();
-        freelookPitch = Mth.clamp(freelookPitch + (float) (dy * 0.15 * invert),
+        freelookPitch = Mth.clamp(freelookPitch + (float) (dy * 0.15),
                 -90.0f - basePitch, 90.0f - basePitch);
         return true;
     }
@@ -1593,6 +1585,7 @@ public class UnlockedCameraClient {
         Minecraft mc = Minecraft.getInstance();
         if (!detached || !active || mc.player == null) {
             shoulderOffset = 0.0f;
+            shoulderCrosshair.reset();
             shoulderClearance = ClientConfig.shoulderOffsetAmount();
             lastClearanceSign = 0.0f;
             lastShoulderNanos = 0L;
@@ -1624,6 +1617,7 @@ public class UnlockedCameraClient {
         // legitimately passes through zero and zeroing it would hitch the slide.
         if (target == 0.0f && Math.abs(shoulderOffset) < 0.005f) {
             shoulderOffset = 0.0f;
+            shoulderCrosshair.reset();
             return;
         }
 
@@ -1682,6 +1676,14 @@ public class UnlockedCameraClient {
         }
 
         float applied = Math.min(Math.abs(shoulderOffset), shoulderClearance) * Math.signum(shoulderOffset);
+        // The fade band can request a tiny lateral move even though the player
+        // is still directly under screen center. Reveal the optional crosshair
+        // only once a full shoulder slide is requested and nearly in place.
+        // Keep aim correction engaged throughout the transition, and latch the
+        // reveal so swapping shoulders or walking beside a wall does not flicker.
+        shoulderCrosshair.update(ClientConfig.shoulderOffsetEnabled()
+                        && targetDistance <= ClientConfig.shoulderOffsetMaxZoom(),
+                ClientConfig.shoulderOffsetAmount(), applied / entityScale);
         if (applied != 0.0f) {
             ((CameraInvoker) camera).unlockedcamera$move(0.0f, 0.0f, applied);
         }
@@ -1698,27 +1700,23 @@ public class UnlockedCameraClient {
      */
     private static HitResult cameraVisualClip(BlockGetter level, Vec3 from, Vec3 to,
             Entity entity, double maxHitSqr) {
+        HitResult hit = level.clip(new ClipContext(
+                from, to, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, entity));
+        // Ordinary terrain and empty space need only the vanilla clip. Avoid
+        // normalizing a walk direction (and allocating its vectors) for all
+        // eight camera rays on every frame when no bamboo was encountered.
+        if (!isCameraTransparentBamboo(level, hit, from, maxHitSqr)) {
+            return hit;
+        }
         Vec3 delta = to.subtract(from);
         double length = delta.length();
         if (length < 1.0E-7) {
-            return level.clip(new ClipContext(from, to, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, entity));
+            return hit;
         }
         Vec3 direction = delta.scale(1.0 / length);
         double startParam = 0.0;
-        HitResult hit;
         for (int i = 0; ; i++) {
-            hit = level.clip(new ClipContext(
-                    from.add(direction.scale(startParam)), to,
-                    ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, entity));
-            if (i >= 8 || !(hit instanceof BlockHitResult blockHit)
-                    || hit.getType() != HitResult.Type.BLOCK
-                    || hit.getLocation().distanceToSqr(from) > maxHitSqr) {
-                break;
-            }
-            BlockState state = level.getBlockState(blockHit.getBlockPos());
-            if (!state.is(Blocks.BAMBOO) && !state.is(Blocks.BAMBOO_SAPLING)) {
-                break;
-            }
+            BlockHitResult blockHit = (BlockHitResult) hit;
             double exit = rayExitOfBlock(blockHit.getBlockPos(), from, direction);
             if (exit <= startParam || !Double.isFinite(exit)) {
                 break;
@@ -1728,8 +1726,24 @@ public class UnlockedCameraClient {
                 return BlockHitResult.miss(to, blockHit.getDirection(), blockHit.getBlockPos());
             }
             startParam = exit + 1.0E-4;
+            hit = level.clip(new ClipContext(
+                    from.add(direction.scale(startParam)), to,
+                    ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, entity));
+            if (i >= 7 || !isCameraTransparentBamboo(level, hit, from, maxHitSqr)) {
+                break;
+            }
         }
         return hit;
+    }
+
+    private static boolean isCameraTransparentBamboo(BlockGetter level, HitResult hit,
+            Vec3 from, double maxHitSqr) {
+        if (!(hit instanceof BlockHitResult blockHit) || hit.getType() != HitResult.Type.BLOCK
+                || hit.getLocation().distanceToSqr(from) > maxHitSqr) {
+            return false;
+        }
+        BlockState state = level.getBlockState(blockHit.getBlockPos());
+        return state.is(Blocks.BAMBOO) || state.is(Blocks.BAMBOO_SAPLING);
     }
 
     /**
@@ -1761,10 +1775,13 @@ public class UnlockedCameraClient {
             float oy = ((i >> 1 & 1) * 2 - 1) * 0.1f;
             float oz = ((i >> 2 & 1) * 2 - 1) * 0.1f;
             Vec3 from = position.add(ox, oy, oz);
+            // Like vanilla, shorten later corner rays once an obstruction has
+            // already limited the camera. This also bounds Sable's sublevel
+            // search box instead of repeatedly scanning behind the near wall.
             Vec3 to = new Vec3(
-                    position.x - forwards.x() * desired + ox,
-                    position.y - forwards.y() * desired + oy,
-                    position.z - forwards.z() * desired + oz);
+                    position.x - forwards.x() * limit + ox,
+                    position.y - forwards.y() * limit + oy,
+                    position.z - forwards.z() * limit + oz);
             HitResult hit = cameraVisualClip(level, from, to, entity, maxHitSqr);
             if (hit.getType() != HitResult.Type.MISS) {
                 float d;
