@@ -307,3 +307,24 @@ Build the release without `-PcameraQa`, verify the release JAR contains no
 `com/caleb/unlockedcamera/qa/` classes, and run the normal build/check tasks
 before publishing. Stop motion probes and wait for their restoration log before
 closing the test client.
+
+## 1.0.2 follow-up: continuous crosshair on F5
+
+Direct first-person entry now carries the existing crosshair through the
+shoulder-camera slide. The distance animation is unchanged. Zooming in from a
+farther view still waits for full shoulder framing, preserving the original
+fix for a reticle appearing near the player's head in the fade band.
+
+The copied pack passed the expanded `ShoulderRuntimeProbe`: actual F5 dispatch,
+visibility before and after the zero-time first camera setup, uninterrupted
+slide, zoom-out/re-entry, clamped zoom distances, disabled options, and vanilla
+third-person entry. Existing swap, wall, fade and permanent-crosshair cases
+also passed. `gradlew.bat build` and the standalone transition regressions
+passed. No FPS benchmarks were repeated for this entry-state-only change; the
+performance tables above describe 1.0.1.
+
+The 1.0.2 release contains the same 39 production class files exercised in the
+focused test, verified byte for byte, and zero QA entries. SHA-256:
+`8632af9398b90947253018a44102d5f73ba8ba331bd74f3b4b4c3d9d81c3a99e`.
+Evidence is retained locally in `build/modpack-test/entry-runtime-results.log`,
+`entry-release-build.log`, and `entry-release-verification.json`.

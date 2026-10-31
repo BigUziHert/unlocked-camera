@@ -1,7 +1,8 @@
 package com.caleb.unlockedcamera.client;
 
 /**
- * Wait for the shoulder framing before revealing its optional crosshair.
+ * Preserve first-person crosshair continuity on direct shoulder-camera entry;
+ * otherwise wait for the shoulder framing before revealing its crosshair.
  * Once revealed, keep it stable through shoulder swaps and wall clearance.
  * The permanent-crosshair option bypasses this state entirely.
  */
@@ -14,6 +15,13 @@ final class ShoulderCrosshairState {
     void reset() {
         ready = false;
         previousAmount = 0.0f;
+    }
+
+    void beginEntry(boolean fromFirstPerson, boolean fullShoulderRequested, float amount) {
+        // First person already has a visible reticle. Carry it through F5's
+        // camera slide instead of hiding it and making it pop back in later.
+        ready = fromFirstPerson && fullShoulderRequested;
+        previousAmount = amount;
     }
 
     void update(boolean fullShoulderRequested, float amount, float appliedOffset) {

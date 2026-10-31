@@ -928,6 +928,7 @@ public class UnlockedCameraClient {
     }
 
     private static void enterCamera(Minecraft mc) {
+        boolean fromFirstPerson = mc.options.getCameraType() == CameraType.FIRST_PERSON;
         active = true;
         setCameraType(mc, CameraType.THIRD_PERSON_BACK);
         targetDistance = Mth.clamp(VANILLA_DISTANCE, ClientConfig.minZoom(), ClientConfig.maxZoom());
@@ -941,7 +942,9 @@ public class UnlockedCameraClient {
         collisionCap = VANILLA_DISTANCE * cameraEntityScale(mc.player);
         lastCapNanos = 0L;
         shoulderOffset = 0.0f;
-        shoulderCrosshair.reset();
+        shoulderCrosshair.beginEntry(fromFirstPerson, ClientConfig.shoulderOffsetEnabled()
+                        && targetDistance <= ClientConfig.shoulderOffsetMaxZoom(),
+                ClientConfig.shoulderOffsetAmount());
         shoulderClearance = ClientConfig.shoulderOffsetAmount();
         lastClearanceSign = 0.0f;
         lastShoulderNanos = 0L;
@@ -1678,7 +1681,8 @@ public class UnlockedCameraClient {
         float applied = Math.min(Math.abs(shoulderOffset), shoulderClearance) * Math.signum(shoulderOffset);
         // The fade band can request a tiny lateral move even though the player
         // is still directly under screen center. Reveal the optional crosshair
-        // only once a full shoulder slide is requested and nearly in place.
+        // only once a full shoulder slide is requested and nearly in place,
+        // except when carrying the visible first-person reticle through F5.
         // Keep aim correction engaged throughout the transition, and latch the
         // reveal so swapping shoulders or walking beside a wall does not flicker.
         shoulderCrosshair.update(ClientConfig.shoulderOffsetEnabled()

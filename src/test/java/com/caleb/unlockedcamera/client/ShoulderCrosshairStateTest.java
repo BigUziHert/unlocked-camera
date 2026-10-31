@@ -3,6 +3,7 @@ package com.caleb.unlockedcamera.client;
 /** Dependency-free transition regressions; run via the shoulderCrosshairTest task. */
 public final class ShoulderCrosshairStateTest {
     public static void main(String[] args) {
+        testFirstPersonEntry();
         testEnterAndZoomFade();
         testSwapAndWalls();
         testInterruptedZoomAndReset();
@@ -11,9 +12,31 @@ public final class ShoulderCrosshairStateTest {
         System.out.println("Shoulder crosshair transition regressions passed");
     }
 
+    private static void testFirstPersonEntry() {
+        ShoulderCrosshairState state = new ShoulderCrosshairState();
+        state.beginEntry(true, true, 0.95f);
+        expect(state.isReady(), "direct first-person entry keeps the existing crosshair");
+        for (float offset : new float[] {0.0f, 0.1f, 0.44f, 0.8f, 0.95f}) {
+            state.update(true, 0.95f, offset);
+            expect(state.isReady(), "entry slide must not blink at " + offset);
+        }
+        state.update(false, 0.95f, 0.95f);
+        expect(!state.isReady(), "entry continuity ends when zoom leaves full shoulder range");
+        state.update(true, 0.95f, 0.19f);
+        expect(!state.isReady(), "later zoom-in still waits for shoulder framing");
+
+        state.beginEntry(true, false, 0.95f);
+        expect(!state.isReady(), "first-person entry into a distant view must not force a reticle");
+        state.update(true, 0.95f, 0.1f);
+        expect(!state.isReady(), "zoom-in after distant entry must not inherit continuity");
+        state.beginEntry(false, true, 0.95f);
+        state.update(true, 0.95f, 0.1f);
+        expect(!state.isReady(), "entry from vanilla third person retains the framing gate");
+    }
+
     private static void testEnterAndZoomFade() {
         ShoulderCrosshairState state = new ShoulderCrosshairState();
-        expect(!state.isReady(), "entering starts without a crosshair over the head");
+        expect(!state.isReady(), "zoom-in starts without a crosshair over the head");
         // User's 0.95 offset / 5.5 max zoom: 6.3 blocks requests only 0.19.
         state.update(false, 0.95f, 0.19f);
         expect(!state.isReady(), "partial fade must not reveal the crosshair");
@@ -49,7 +72,7 @@ public final class ShoulderCrosshairStateTest {
         state.update(true, 0.95f, 0.95f);
         state.reset();
         state.update(true, 0.95f, 0.0f);
-        expect(!state.isReady(), "F5 re-entry or seat handoff must wait for its new slide");
+        expect(!state.isReady(), "reset clears continuity before the next entry or seat handoff");
     }
 
     private static void testConfigChanges() {

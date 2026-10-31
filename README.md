@@ -15,8 +15,10 @@ slots. When terrain pulls the camera in, it glides back out smoothly once clear.
 While the shoulder offset is engaged, targeting raycasts from the camera through
 that center crosshair (validated against your real reach), so whatever sits under
 the crosshair is what you mine, hit, or interact with — like an over-the-shoulder
-shooter. By default the crosshair appears at or below the shoulder-offset zoom
-limit once the camera has nearly finished sliding over the shoulder. It stays
+shooter. Switching directly from first person into the shoulder camera keeps
+the crosshair visible throughout the camera slide. When zooming in from farther
+out, it appears at or below the shoulder-offset zoom limit once the slide is
+nearly complete. It stays
 visible during shoulder swaps and wall clearance; a config option makes it permanent.
 **Shoulder offset:** zoomed in to 4 blocks or closer (configurable), the camera
 slides over the shoulder; press `X` (rebindable) to swap sides. The offset clips
@@ -61,7 +63,8 @@ Mods > Unlocked Camera > Config; changes apply live):
   zoomed out past the shoulder gate it draws at screen center but aim follows
   the body's facing
 - `crosshairOnShoulderOffset` — draw it at or below the shoulder-offset zoom
-  limit after the shoulder slide is nearly in place, default on
+  limit, preserving it on direct first-person entry and waiting for the shoulder
+  slide when zooming in from farther out, default on
 - `showEnterMessage` — show the action-bar text when entering the unlocked
   camera, default on
 - `enableShoulderOffset` — toggle the over-the-shoulder offset, default on
