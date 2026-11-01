@@ -2,6 +2,9 @@ package com.caleb.unlockedcamera.client;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.phys.Vec3;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -48,6 +51,12 @@ final class SableCompat {
      * so skip Method.invoke's boxing and access checks. */
     private static MethodHandle renderPose;
     private static MethodHandle logicalPose;
+    private static boolean interactionBridgeInitialized;
+    private static Method containingPosition;
+    private static Method interactionLogicalPose;
+    private static Method transformPosition;
+    private static Method interactionRenderPose;
+    private static Method inverseNormal;
 
     private SableCompat() {
     }
@@ -87,6 +96,78 @@ final class SableCompat {
             // Sable's internals changed; the seat check degrades to "never seated".
             helperField = null;
             getVehicleSubLevel = null;
+        }
+    }
+
+    /** World-space target for a server-validated interaction at the tick pose. */
+    static Vec3 interactionWorldPoint(Level level, Vec3 point) {
+        if (!initialized) init();
+        if (!sablePresent) return point;
+        initInteractionBridge();
+        if (containingPosition != null) {
+            try {
+                Object sublevel = containingPosition.invoke(helperField.get(null), level, point);
+                return sublevel == null ? point
+                        : (Vec3) transformPosition.invoke(interactionLogicalPose.invoke(sublevel), point);
+            } catch (ReflectiveOperationException | LinkageError unavailable) {
+                // Never interpret an unavailable plot-space transform as a
+                // world-space aim toward Sable's distant storage coordinates.
+            }
+        }
+        Entity player = Minecraft.getInstance().player;
+        return player != null && point.distanceToSqr(player.getEyePosition()) < 256.0 * 256.0 ? point : null;
+    }
+
+    private static void initInteractionBridge() {
+        if (!interactionBridgeInitialized) {
+            interactionBridgeInitialized = true;
+            try {
+                if (helperField == null) helperField = Class.forName("dev.ryanhcode.sable.Sable").getField("HELPER");
+                containingPosition = Class.forName("dev.ryanhcode.sable.ActiveSableCompanion")
+                        .getMethod("getContaining", Level.class, net.minecraft.core.Position.class);
+                interactionLogicalPose = Class.forName("dev.ryanhcode.sable.sublevel.SubLevel").getMethod("logicalPose");
+                transformPosition = Class.forName("dev.ryanhcode.sable.companion.math.Pose3dc")
+                        .getMethod("transformPosition", Vec3.class);
+            } catch (ReflectiveOperationException | LinkageError unavailable) {
+                containingPosition = null;
+            }
+        }
+    }
+
+    /** Converts AeroWorks' local squared clip distance back to its world-ray parameter. */
+    static Double consoleRayParameter(BlockEntity target, Vec3 direction, float partialTick, double localDistanceSquared) {
+        if (!initialized) init();
+        if (!sablePresent) return rayParameter(null, direction, localDistanceSquared);
+        initInteractionBridge();
+        if (containingPosition == null || target.getLevel() == null) return null;
+        try {
+            Object sublevel = containingPosition.invoke(helperField.get(null), target.getLevel(), Vec3.atCenterOf(target.getBlockPos()));
+            if (sublevel == null) return rayParameter(null, direction, localDistanceSquared);
+            if (interactionRenderPose == null) interactionRenderPose = Class.forName("dev.ryanhcode.sable.sublevel.ClientSubLevel")
+                    .getMethod("renderPose", float.class);
+            return rayParameter(interactionRenderPose.invoke(sublevel, partialTick), direction, localDistanceSquared);
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException unavailable) {
+            return null;
+        }
+    }
+
+    private static Double rayParameter(Object pose, Vec3 direction, double localDistanceSquared) {
+        if (!Double.isFinite(localDistanceSquared) || localDistanceSquared < 0) return null;
+        try {
+            Vec3 localDirection = direction;
+            if (pose != null) {
+                if (inverseNormal == null) inverseNormal = Class.forName("dev.ryanhcode.sable.companion.math.Pose3dc")
+                        .getMethod("transformNormalInverse", Vec3.class);
+                localDirection = (Vec3) inverseNormal.invoke(pose, direction);
+            }
+            double lengthSquared = localDirection.lengthSqr();
+            if (!Double.isFinite(lengthSquared) || lengthSquared < 1.0E-12) return null;
+            // Inverse scaling changes the ray's length. The addon reports
+            // |localDirection * t|^2, so recover t before using the world ray.
+            double parameter = Math.sqrt(localDistanceSquared / lengthSquared);
+            return Double.isFinite(parameter) ? parameter : null;
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException unavailable) {
+            return null;
         }
     }
 

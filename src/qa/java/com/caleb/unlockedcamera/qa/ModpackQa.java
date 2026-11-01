@@ -41,6 +41,7 @@ public final class ModpackQa {
         SableSceneProbe.tick(mc);
         PingActionProbe.tick(mc);
         SableMotionProbe.tick(mc);
+        BlockInteractionProbe.tick(mc);
         if (!ready) {
             ready = true;
             log("READY " + mc.player.position() + " mods=" + net.neoforged.fml.ModList.get().size());
@@ -64,6 +65,13 @@ public final class ModpackQa {
                     case "rayprobe" -> invokeProbe("CameraRayProbe", mc);
                     case "rayprofile" -> profileRays(mc, arg);
                     case "integrationprobe" -> IntegrationSceneProbe.start(mc, ModpackQa::log);
+                    case "projectileall" -> IntegrationSceneProbe.projectiles(mc, ModpackQa::log);
+                    case "projectilebaseline" -> IntegrationSceneProbe.projectileBaseline(mc, ModpackQa::log, arg);
+                    case "meleeall" -> IntegrationSceneProbe.melee(mc, ModpackQa::log);
+                    case "blockprobe" -> BlockInteractionProbe.run(mc, ModpackQa::log);
+                    case "blockstates" -> BlockInteractionProbe.runStates(mc, ModpackQa::log);
+                    case "blockinteractions" -> BlockInteractionProbe.start(mc, ModpackQa::log, arg);
+                    case "blockstop" -> BlockInteractionProbe.stop(mc);
                     case "sableprobe" -> SableSceneProbe.start(mc, ModpackQa::log);
                     case "pingprobe" -> PingActionProbe.start(mc, ModpackQa::log);
                     case "probe" -> invokeProbe(arg, mc);

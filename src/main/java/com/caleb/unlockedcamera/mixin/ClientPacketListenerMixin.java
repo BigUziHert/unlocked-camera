@@ -1,6 +1,8 @@
 package com.caleb.unlockedcamera.mixin;
 
 import com.caleb.unlockedcamera.client.UnlockedCameraClient;
+import com.caleb.unlockedcamera.client.BucketUseRayContext;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientCommonPacketListenerImpl;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
@@ -54,9 +56,20 @@ public abstract class ClientPacketListenerMixin {
         if (!(packet instanceof ServerboundUseItemPacket use)) {
             return packet;
         }
+        // Buckets capture their exact block/fluid hit before client prediction
+        // can remove the source or replace the held stack. This request-scoped
+        // value takes precedence over a projectile ray that ignores fluids.
+        float[] aim = BucketUseRayContext.consumePacketAim(Minecraft.getInstance().player, use.getHand());
+        if (aim != null) {
+            // A fluid hit can differ from an existing ranged-item hold. The
+            // next tick must reassert that hold even when its aim is unchanged.
+            UnlockedCameraClient.requestAimResync();
+            UnlockedCameraClient.recordTransmittedAim(aim);
+            return new ServerboundUseItemPacket(use.getHand(), use.getSequence(), aim[0], aim[1]);
+        }
         // The per-tick cache first — recomputing per packet is the Sable
         // slideshow the cache exists to prevent.
-        float[] aim = UnlockedCameraClient.continuousAimAngles();
+        aim = UnlockedCameraClient.continuousAimAngles();
         if (aim == null) {
             aim = UnlockedCameraClient.crosshairAimAngles();
             if (aim == null) {

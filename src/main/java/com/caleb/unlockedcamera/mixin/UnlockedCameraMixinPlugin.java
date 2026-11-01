@@ -22,6 +22,9 @@ import java.util.Set;
 public class UnlockedCameraMixinPlugin implements IMixinConfigPlugin {
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        if (mixinClassName.contains(".Aeroworks")) {
+            return LoadingModList.get().getModFileById("aeroworks") != null;
+        }
         if (mixinClassName.contains(".BetterCombat")) {
             return LoadingModList.get().getModFileById("bettercombat") != null;
         }
@@ -39,6 +42,9 @@ public class UnlockedCameraMixinPlugin implements IMixinConfigPlugin {
         }
         if (mixinClassName.contains(".PingWheel")) {
             return LoadingModList.get().getModFileById("pingwheel") != null;
+        }
+        if (mixinClassName.contains(".Powergrid")) {
+            return LoadingModList.get().getModFileById("powergrid") != null;
         }
         return true;
     }

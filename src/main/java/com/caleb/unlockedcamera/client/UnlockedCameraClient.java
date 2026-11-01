@@ -386,11 +386,17 @@ public class UnlockedCameraClient {
         // weapons do not hold aim; ability weapons follow the crossbow rule.
         // On mounts, retain the narrower active-key/final-release gate.
         boolean simplySwordsAbility = SimplySwordsCompat.isAbilityEngaged(mc.player);
+        // Socket and wire selectors use a precise interaction point rather
+        // than the spread-tolerant projectile aim. Keep that server ray ready
+        // through the existing packet cache without turning the local body.
+        float[] interactionAim = mc.player.isUsingItem() || simplySwordsAbility
+                ? null : AddonInteractionAim.angles(mc);
         boolean holdWanted = (holdingRangedItem(mc) || SimplySwordsCompat.isAbilityHeld(mc.player)
-                || simplySwordsAbility || freelookDeflected(mc))
+                || simplySwordsAbility || freelookDeflected(mc) || interactionAim != null)
                 && (!mc.player.isPassenger() || mc.player.isUsingItem()
                         || TaczCompat.isGunEngaged(mc.player) || simplySwordsAbility);
-        float[] freshAim = holdWanted ? crosshairAimAngles() : null;
+        float[] freshAim = holdWanted
+                ? (interactionAim != null ? interactionAim : crosshairAimAngles()) : null;
         boolean hadAim = cachedHeldAim != null;
         cachedHeldAim = freshAim;
         heldAimTicks++;
@@ -419,11 +425,9 @@ public class UnlockedCameraClient {
             lastAimSendTick = heldAimTicks;
         }
 
-        // A use packet was rewritten while no hold was running (eating,
-        // blocking, a spyglass — with the crosshair aim active): the server
-        // has the stamped aim and nothing else will correct it, so send the
-        // true rotation right back. Skipped if a hold started this tick — the
-        // hold owns the rotation then.
+        // A use packet supplied its own aim. A held aim was reasserted above;
+        // without a hold, restore the true rotation so the use stamp does not
+        // persist until the body next turns.
         if (aimResyncRequested) {
             aimResyncRequested = false;
             if (cachedHeldAim == null && mc.getConnection() != null) {
@@ -681,13 +685,15 @@ public class UnlockedCameraClient {
         }
     }
 
-    /** Set when a use packet was aim-rewritten with no hold running (food, a
-     * shield — anything unranged used while the crosshair aim is active): the
-     * stamp would persist server-side with no hold to end and correct it. */
+    /** A one-shot use aim must give way to the next fresh hold or body pose. */
     private static boolean aimResyncRequested;
 
     public static void requestAimResync() {
         aimResyncRequested = true;
+        // Keep the current cache available to intervening movement packets,
+        // but force the next Pre tick to send its freshly recomputed hold.
+        lastSentAim = null;
+        lastAimSendTick = heldAimTicks - 2;
     }
 
     /**
@@ -1422,6 +1428,49 @@ public class UnlockedCameraClient {
         // or blocks behind the character can't become the staff's target.
         return gapWalkClip(origin, direction, end, playerDepth, ClipContext.Block.OUTLINE,
                 hitFluids ? ClipContext.Fluid.ANY : ClipContext.Fluid.NONE, entity);
+    }
+
+    /**
+     * Local item-use block ray with the caller's fluid policy and vanilla eye
+     * reach. Buckets need SOURCE_ONLY when collecting and NONE when placing;
+     * an entity crosshair hit must not replace this block/fluid query.
+     * Returns null when the normal body ray should be used.
+     */
+    public static BlockHitResult crosshairBlockPick(net.minecraft.world.entity.player.Player player,
+                                                   double reach, ClipContext.Fluid fluidMode) {
+        Minecraft mc = Minecraft.getInstance();
+        if (!crosshairAimActive() || mc.level == null || player != mc.player) {
+            return null;
+        }
+        Camera camera = mc.gameRenderer.getMainCamera();
+        if (!camera.isInitialized()) {
+            return null;
+        }
+        Vector3f forward = camera.getLookVector();
+        Vec3 direction = new Vec3(forward.x(), forward.y(), forward.z());
+        Vec3 origin = camera.getPosition();
+        double playerDepth = Math.max(0.0, player.getEyePosition().subtract(origin).dot(direction));
+        Vec3 end = origin.add(direction.scale(reach + playerDepth));
+        HitResult hit = gapWalkClip(origin, direction, end, playerDepth,
+                ClipContext.Block.OUTLINE, fluidMode, player);
+        return (BlockHitResult) filterToPlayerRange(hit, player, reach);
+    }
+
+    /** Packet aim for the bucket's captured block/fluid hit before local prediction changes it. */
+    public static float[] bucketHitAimAngles(net.minecraft.world.entity.player.Player player, BlockHitResult hit) {
+        Minecraft mc = Minecraft.getInstance();
+        if (!crosshairAimActive() || mc.level == null || player != mc.player || player == null
+                || hit == null || hit.getType() != HitResult.Type.BLOCK) {
+            return null;
+        }
+        Vec3 point = SableCompat.interactionWorldPoint(mc.level, hit.getLocation());
+        if (point == null) return null;
+        Vec3 delta = point.subtract(player.getEyePosition());
+        double distance = delta.length();
+        if (!Double.isFinite(distance) || distance < 1.0E-6 || distance > player.blockInteractionRange()) return null;
+        float yaw = (float) Math.toDegrees(Math.atan2(-delta.x, delta.z));
+        return new float[]{player.getYRot() + Mth.wrapDegrees(yaw - player.getYRot()),
+                (float) -Math.toDegrees(Math.atan2(delta.y, delta.horizontalDistance())), (float) distance};
     }
 
     /**

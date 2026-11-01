@@ -44,3 +44,7 @@ run2/
 
 # Reference clone of another mod's source (not part of this repo)
 voxy/
+
+# Generated Python bytecode from local QA tools
+__pycache__/
+*.py[cod]

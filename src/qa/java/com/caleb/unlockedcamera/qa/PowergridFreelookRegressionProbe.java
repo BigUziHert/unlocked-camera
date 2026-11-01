@@ -1,0 +1,9 @@
+package com.caleb.unlockedcamera.qa;
+import net.minecraft.client.Minecraft;
+import java.util.function.Consumer;
+public final class PowergridFreelookRegressionProbe {
+    private PowergridFreelookRegressionProbe() {}
+    public static void run(Minecraft mc, Consumer<String> log) throws Exception {
+        PowergridEndpointReadyScenario.runRegression(mc, log, true);
+    }
+}
