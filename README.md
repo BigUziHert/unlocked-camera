@@ -39,6 +39,9 @@ crosshair.
 **Better Third Person compatibility:** the mod never touches camera rotation, so
 BTP's free orbit is untouched; targeting through the center crosshair works the
 same with or without BTP.
+**Iron's Arms 'n Artifice compatibility:** guns aim from the player's eyes toward
+the centered crosshair in shoulder view and first-person freelook. Iron's still
+applies each gun's recoil and bullet spread.
 **Just Zoom compatibility:** freelook uses the same processed mouse movement as
 normal look, including zoom sensitivity and smoothing. Holding Just Zoom keeps
 the unlocked camera behind the player; scrolling adjusts lens magnification.

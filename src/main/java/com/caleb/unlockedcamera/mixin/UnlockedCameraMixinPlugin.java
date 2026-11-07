@@ -28,6 +28,9 @@ public class UnlockedCameraMixinPlugin implements IMixinConfigPlugin {
         if (mixinClassName.contains(".BetterCombat")) {
             return LoadingModList.get().getModFileById("bettercombat") != null;
         }
+        if (mixinClassName.contains(".IronsArtifice")) {
+            return LoadingModList.get().getModFileById("irons_artifice") != null;
+        }
         if (mixinClassName.contains(".JustZoom")) {
             return LoadingModList.get().getModFileById("justzoom") != null;
         }

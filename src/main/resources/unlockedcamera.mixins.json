@@ -27,6 +27,8 @@
     "CreateZapperSelectionMixin",
     "GameRendererMixin",
     "GuiMixin",
+    "IronsArtificeFireMixin",
+    "IronsArtificeRecoilMixin",
     "ItemStackBucketUseMixin",
     "JustZoomCameraTypeMixin",
     "JustZoomFovMixin",
